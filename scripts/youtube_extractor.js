@@ -106,15 +106,18 @@
     
     // Return the payload (either via storage or message passing)
     // For testing purposes right now, we just save it to local storage so we can view it
+    const urlParams = new URLSearchParams(window.location.search);
+    const videoId = urlParams.get('v') || playerResponse.videoDetails.videoId;
+
     chrome.storage.local.set({ 
       currentStudySession: {
         type: 'youtube',
         title: playerResponse.videoDetails.title,
-        videoId: playerResponse.videoDetails.videoId,
+        videoId: videoId,
         content: combinedData
       }
     }, () => {
-      console.log("Guided Learning Sandbox: Payload saved to storage.");
+      console.log("Guided Learning Sandbox: Payload saved to storage. Video ID:", videoId);
     });
 
     return combinedData;

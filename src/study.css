@@ -112,6 +112,17 @@ body {
 /* Right Pane: Tutor UI */
 .tutor-pane {
   position: relative;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.2) transparent;
+}
+
+.tutor-pane::-webkit-scrollbar {
+  width: 6px;
+}
+.tutor-pane::-webkit-scrollbar-thumb {
+  background-color: rgba(255,255,255,0.2);
+  border-radius: 10px;
 }
 
 .progress-container {

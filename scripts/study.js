@@ -61,31 +61,74 @@ function loadSessionPayload() {
     state.sessionData = res.currentStudySession;
     els.resourceTitle.textContent = state.sessionData.title;
     
+    // Set up YouTube listener for gating
+    if (state.sessionData.type === 'youtube') {
+      setupYouTubeGating();
+    }
+    
     renderResourceViewer();
     startSectionerPipeline();
   });
 }
 
+function setupYouTubeGating() {
+  window.addEventListener('message', (event) => {
+    if (event.origin !== 'https://www.youtube.com') return;
+    try {
+      const data = JSON.parse(event.data);
+      if (data.event === 'infoDelivery' && data.info && data.info.currentTime) {
+        const currentTime = data.info.currentTime;
+        
+        // If not the last section, check if we hit the boundary
+        if (state.sections.length > 0 && state.currentIndex < state.sections.length - 1) {
+          const nextTimestamp = state.sections[state.currentIndex + 1].startTimestamp;
+          
+          if (currentTime >= nextTimestamp - 0.5) {
+            // Hit the boundary! Pause the video.
+            const iframe = document.getElementById('yt-iframe');
+            if (iframe && iframe.contentWindow) {
+              iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo' }), 'https://www.youtube.com');
+            }
+            
+            // Optionally bounce the "Mark as Reviewed" button to draw attention
+            els.markReviewedBtn.style.transform = 'scale(1.05)';
+            setTimeout(() => els.markReviewedBtn.style.transform = '', 300);
+          }
+        }
+      }
+    } catch (e) {
+      // Ignore parse errors from other postMessages
+    }
+  });
+}
+
 function renderResourceViewer() {
   if (state.sessionData.type === 'youtube') {
-    els.resourceContent.innerHTML = `<div class="video-container"><div id="yt-player-target"></div></div>`;
+    if (!state.sessionData.videoId) {
+      showError("Video ID could not be extracted. Please try extracting the video again.");
+      return;
+    }
     
-    // Load YouTube IFrame API
-    const tag = document.createElement('script');
-    tag.src = "https://www.youtube.com/iframe_api";
-    const firstScriptTag = document.getElementsByTagName('script')[0];
-    firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-    
-    window.onYouTubeIframeAPIReady = () => {
-      state.ytPlayer = new YT.Player('yt-player-target', {
-        videoId: state.sessionData.videoId,
-        playerVars: { 'playsinline': 1, 'autoplay': 0 },
-        events: { 'onReady': () => console.log("YT Player ready") }
-      });
+    // In Manifest V3, we cannot load external scripts (like the YT IFrame API). 
+    // Instead, we embed the iframe with enablejsapi=1 and use postMessage directly.
+    els.resourceContent.innerHTML = `
+      <div class="video-container">
+        <iframe id="yt-iframe" 
+                src="https://www.youtube.com/embed/${state.sessionData.videoId}?enablejsapi=1&playsinline=1" 
+                frameborder="0" 
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                allowfullscreen>
+        </iframe>
+      </div>`;
+      
+    // Tell the iframe we are listening to its events once it loads
+    const iframe = document.getElementById('yt-iframe');
+    iframe.onload = () => {
+      iframe.contentWindow.postMessage(JSON.stringify({ event: 'listening' }), 'https://www.youtube.com');
     };
   } else {
-    // Standard Article
-    els.resourceContent.innerHTML = `<p>${state.sessionData.content.replace(/\\n/g, '<br>')}</p>`;
+    // For articles, we don't render the text yet until sections are ready!
+    els.resourceContent.innerHTML = `<div style="text-align:center; padding:40px; color:#94A3B8;">Waiting for Gemini to segment the text...</div>`;
   }
 }
 
@@ -105,8 +148,20 @@ function updateUI() {
   els.validationHint.style.display = 'none';
   
   // Sync YouTube if applicable
-  if (state.ytPlayer && current.startTimestamp) {
-    state.ytPlayer.seekTo(current.startTimestamp);
+  if (state.sessionData.type === 'youtube' && current.startTimestamp !== undefined) {
+    const iframe = document.getElementById('yt-iframe');
+    if (iframe && iframe.contentWindow) {
+      iframe.contentWindow.postMessage(JSON.stringify({
+        event: 'command',
+        func: 'seekTo',
+        args: [current.startTimestamp, true]
+      }), 'https://www.youtube.com');
+    }
+  } else if (state.sessionData.type === 'article' && current.rawTextChunk) {
+    // Article Gating: Only render the current chunk!
+    els.resourceContent.innerHTML = `<p>${current.rawTextChunk.replace(/\\n/g, '<br>')}</p>`;
+    // Scroll back to top
+    els.resourceContent.scrollTop = 0;
   }
 }
 
@@ -152,7 +207,8 @@ async function startSectionerPipeline() {
 
     const systemInstruction = `You are an expert tutor. Your task is to analyze the provided educational material and break it down into 3 to 5 logical sections for a structured learning session.
 For each section, provide a concise but descriptive title, and a 2-3 sentence summary of the core concepts covered in that section.
-If the material has timestamps (like a YouTube transcript), extract the accurate starting timestamp for that section. If it's a standard article, set startTimestamp to 0.`;
+If the material has timestamps (like a YouTube transcript), extract the accurate starting timestamp for that section. If it's a standard article, set startTimestamp to 0.
+Crucially, you must also provide the 'rawTextChunk'. This MUST be the exact, verbatim block of original text that corresponds to this section. Do not summarize the rawTextChunk, output the actual source text.`;
 
     const prompt = `Please segment the following content into a learning curriculum.\\n\\nContent:\\n${contentContext}`;
 
@@ -163,9 +219,10 @@ If the material has timestamps (like a YouTube transcript), extract the accurate
         properties: {
           title: { type: "STRING", description: "Short, descriptive title of the section." },
           summary: { type: "STRING", description: "A robust 2-3 sentence summary of what this section teaches." },
-          startTimestamp: { type: "NUMBER", description: "The starting timestamp in seconds. Use 0 if it is an article." }
+          startTimestamp: { type: "NUMBER", description: "The starting timestamp in seconds. Use 0 if it is an article." },
+          rawTextChunk: { type: "STRING", description: "The verbatim original text belonging to this section." }
         },
-        required: ["title", "summary", "startTimestamp"]
+        required: ["title", "summary", "startTimestamp", "rawTextChunk"]
       }
     };
 
@@ -217,7 +274,10 @@ els.markReviewedBtn.addEventListener('click', async () => {
 
 els.submitAnswerBtn.addEventListener('click', async () => {
   const ans = els.answerInput.value.trim();
-  if (!ans) return;
+  if (!ans) {
+    showValidationHint("Please enter an answer before submitting.", false);
+    return;
+  }
   
   showLoader("Validating answer...");
   
