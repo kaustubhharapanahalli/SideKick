@@ -54,7 +54,15 @@ class GeminiClient {
         const textOutput = data.candidates[0].content.parts[0].text;
         
         if (responseSchema) {
-          return JSON.parse(textOutput);
+          try {
+            let cleanText = textOutput.trim();
+            if (cleanText.startsWith('```')) {
+              cleanText = cleanText.replace(/^```(?:json)?\\n?/i, '').replace(/\\n?```$/i, '');
+            }
+            return JSON.parse(cleanText);
+          } catch (parseError) {
+            throw new Error(`Failed to parse Gemini JSON output: ${parseError.message}. Raw output: ${textOutput}`);
+          }
         }
         return textOutput;
         

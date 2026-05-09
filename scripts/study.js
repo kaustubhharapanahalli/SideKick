@@ -15,7 +15,8 @@ let state = {
   sections: [],
   sessionData: null,
   apiKey: null,
-  ytPlayer: null
+  ytPlayer: null,
+  failedAttempts: 0
 };
 
 // UI Elements
@@ -30,6 +31,7 @@ const els = {
   questionText: document.getElementById('questionText'),
   answerInput: document.getElementById('answerInput'),
   submitAnswerBtn: document.getElementById('submitAnswerBtn'),
+  revealAnswerBtn: document.getElementById('revealAnswerBtn'),
   validationHint: document.getElementById('validationHint'),
   tutorLoader: document.getElementById('tutorLoader')
 };
@@ -145,7 +147,10 @@ function updateUI() {
   els.questionArea.classList.remove('active');
   els.markReviewedBtn.style.display = 'flex';
   els.answerInput.value = '';
-  els.validationHint.style.display = 'none';
+  els.validationHint.className = 'validation-hint';
+  els.validationHint.style.display = '';
+  els.revealAnswerBtn.style.display = 'none';
+  state.failedAttempts = 0;
   
   // Sync YouTube if applicable
   if (state.sessionData.type === 'youtube' && current.startTimestamp !== undefined) {
@@ -181,6 +186,7 @@ function hideLoader() { els.tutorLoader.classList.remove('active'); }
 function showValidationHint(msg, isSuccess) {
   els.validationHint.textContent = msg;
   els.validationHint.className = 'validation-hint ' + (isSuccess ? 'success' : 'error');
+  els.validationHint.style.display = 'block'; // Ensure inline style doesn't block it
   
   // Trigger reflow to restart animation
   void els.validationHint.offsetWidth;
@@ -323,12 +329,62 @@ Determine if the student has demonstrated a solid understanding. If the answer i
         }
       }, 2500);
     } else {
+      state.failedAttempts++;
       showValidationHint("Hint: " + response.feedback, false);
+      if (state.failedAttempts >= 1) {
+        els.revealAnswerBtn.style.display = 'block';
+      }
     }
 
   } catch (error) {
     console.error("Failed to validate answer:", error);
     hideLoader();
     showValidationHint("Failed to validate: " + error.message, false);
+  }
+});
+
+els.revealAnswerBtn.addEventListener('click', async () => {
+  showLoader("Generating model answer...");
+  try {
+    const client = new GeminiClient(state.apiKey);
+    const currentSection = state.sections[state.currentIndex];
+    const questionAsked = els.questionText.textContent;
+    
+    const prompt = `Section Summary: ${currentSection.summary}\\nQuestion Asked: ${questionAsked}\\n\\nPlease provide a concise, model correct answer.`;
+    const systemInstruction = "You are an expert tutor providing the correct answer key to a struggling student. Keep it clear, educational, and under 3 sentences.";
+    
+    const responseSchema = {
+      type: "OBJECT",
+      properties: {
+        modelAnswer: { type: "STRING" }
+      },
+      required: ["modelAnswer"]
+    };
+
+    const response = await client.generateContent(prompt, systemInstruction, responseSchema);
+    
+    hideLoader();
+    els.revealAnswerBtn.style.display = 'none';
+    
+    showValidationHint("Model Answer: " + response.modelAnswer + " Moving to the next section...", true);
+    setTimeout(() => {
+      if (state.currentIndex < state.sections.length - 1) {
+        state.currentIndex++;
+        updateUI();
+      } else {
+        els.sectionSummary.innerHTML = "<strong>Module Complete!</strong><br>You have successfully mastered this material.";
+        els.questionArea.classList.remove('active');
+        els.validationHint.style.display = 'none';
+        
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.remove(['currentStudySession', 'currentStudySessionError']);
+        }
+      }
+    }, 5000);
+
+  } catch (error) {
+    console.error("Failed to reveal answer:", error);
+    hideLoader();
+    showValidationHint("Failed to reveal answer: " + error.message, false);
   }
 });

@@ -50,7 +50,10 @@
         
         <textarea id="answerInput" placeholder="Type your answer here... Explain your reasoning."></textarea>
         
-        <button class="btn btn-primary" id="submitAnswerBtn">Submit Answer</button>
+        <div style="display: flex; gap: 12px; margin-bottom: 20px;">
+          <button class="btn btn-primary" id="submitAnswerBtn" style="flex: 1;">Submit Answer</button>
+          <button class="btn btn-secondary" id="revealAnswerBtn" style="display: none;">Reveal Answer</button>
+        </div>
         
         <div class="validation-hint" id="validationHint">
           <!-- Hints or Success messages appear here -->
