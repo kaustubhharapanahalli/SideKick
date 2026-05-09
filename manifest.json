@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Guided Learning Sandbox",
+  "version": "1.0.0",
+  "description": "Transforms web resources into a structured, gated learning environment using Gemini.",
+  "permissions": [
+    "storage",
+    "scripting",
+    "activeTab",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "*://*.youtube.com/*"
+  ],
+  "background": {
+    "service_worker": "scripts/background.js"
+  },
+  "action": {
+    "default_title": "Start Study Session"
+  },
+  "options_ui": {
+    "page": "src/options.html",
+    "open_in_tab": true
+  }
+}

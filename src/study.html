@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Study Session - Guided Learning Sandbox</title>
+  <link rel="stylesheet" href="study.css">
+</head>
+<body>
+
+  <div class="app-container">
+    
+    <!-- LEFT PANE: Resource Viewer -->
+    <div class="glass-panel resource-pane">
+      <div class="resource-header">
+        <h1 class="resource-title" id="resourceTitle">Loading Resource...</h1>
+      </div>
+      
+      <!-- Container for either text article or YouTube IFrame -->
+      <div class="resource-content" id="resourceContent">
+        <!-- Injected via JS -->
+      </div>
+    </div>
+
+    <!-- RIGHT PANE: Tutor UI -->
+    <div class="glass-panel tutor-pane">
+      
+      <div class="progress-container">
+        <span class="progress-text" id="progressText">Section 1 of X</span>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progressBar"></div>
+        </div>
+      </div>
+
+      <div class="section-summary" id="sectionSummary">
+        Waiting for Gemini to segment the content...
+      </div>
+
+      <!-- Action Button 1 -->
+      <button class="btn btn-primary" id="markReviewedBtn" style="margin-bottom: 24px;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+        Mark as Reviewed
+      </button>
+
+      <!-- Question & Answer Area -->
+      <div class="question-area" id="questionArea">
+        <div class="question-text" id="questionText">
+          Loading question...
+        </div>
+        
+        <textarea id="answerInput" placeholder="Type your answer here... Explain your reasoning."></textarea>
+        
+        <button class="btn btn-primary" id="submitAnswerBtn">Submit Answer</button>
+        
+        <div class="validation-hint" id="validationHint">
+          <!-- Hints or Success messages appear here -->
+        </div>
+      </div>
+
+      <!-- Loading Overlay -->
+      <div class="loader-overlay" id="tutorLoader">
+        <div class="spinner"></div>
+        <div style="font-weight: 500;">Gemini is thinking...</div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- Link state management script -->
+  <script src="../scripts/gemini_api.js"></script>
+  <script src="../scripts/study.js"></script>
+</body>
+</html>
