@@ -11,8 +11,12 @@
   ],
   "host_permissions": [
     "<all_urls>",
-    "*://*.youtube.com/*"
+    "*://*.youtube.com/*",
+    "*://*.youtube-nocookie.com/*"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; frame-src https://www.youtube-nocookie.com https://www.youtube.com;"
+  },
   "background": {
     "service_worker": "scripts/background.js"
   },

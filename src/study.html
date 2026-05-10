@@ -13,7 +13,18 @@
     <!-- LEFT PANE: Resource Viewer -->
     <div class="glass-panel resource-pane">
       <div class="resource-header">
-        <h1 class="resource-title" id="resourceTitle">Loading Resource...</h1>
+        <div class="resource-header-top">
+          <h1 class="resource-title" id="resourceTitle">Loading Resource...</h1>
+          <button class="sections-toggle" id="sectionsToggle" style="display:none;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+            Sections
+          </button>
+        </div>
+
+        <!-- Section Navigator Dropdown -->
+        <div class="section-nav" id="sectionNav" style="display:none;">
+          <!-- Populated by JS -->
+        </div>
       </div>
       
       <!-- Container for either text article or YouTube IFrame -->

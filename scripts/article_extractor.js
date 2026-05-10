@@ -22,7 +22,8 @@
       'svg', 'form', 'button', 'header', 'figure', 'img', 'video', 'audio',
       '.reference', '.references', '.reflist', '.navbox', '.sidebar',
       '.infobox', '.toc', '#toc', '.mw-editsection', '.noprint',
-      '[role="navigation"]', '.catlinks', '.mw-authority-control'
+      '.mw-jump-link', '.mw-indicator', '.mw-authority-control',
+      '[role="navigation"]', '.catlinks', '.hatnote', '.ambox'
     ];
 
     elementsToRemove.forEach(selector => {
@@ -46,33 +47,59 @@
     });
 
     // 4. Find the main content node
-    // Priority: site-specific selectors first, then generic ones
+    // Strategy: check specific selectors in priority order, then use scoring
     let bestNode = null;
 
-    // Wikipedia-specific (most specific first)
-    if (bodyClone.querySelector('.mw-parser-output')) {
-      bestNode = bodyClone.querySelector('.mw-parser-output');
-    } else if (bodyClone.querySelector('#mw-content-text')) {
-      bestNode = bodyClone.querySelector('#mw-content-text');
-    } else if (bodyClone.querySelector('article')) {
-      bestNode = bodyClone.querySelector('article');
-    } else if (bodyClone.querySelector('[role="main"]')) {
-      bestNode = bodyClone.querySelector('[role="main"]');
-    } else if (bodyClone.querySelector('main')) {
-      bestNode = bodyClone.querySelector('main');
-    } else {
-      // Scoring fallback
+    // Ordered list of selectors to try (most specific → most generic)
+    const contentSelectors = [
+      // Wikipedia
+      '#mw-content-text > .mw-parser-output',
+      '#mw-content-text',
+      // Common blog/news/docs platforms
+      'article[class*="post"]', 'article[class*="article"]', 'article[class*="content"]',
+      '[class*="article-body"]', '[class*="article-content"]', '[class*="post-content"]',
+      '[class*="entry-content"]', '[class*="story-body"]', '[class*="post-body"]',
+      '[class*="article__body"]', '[class*="content__body"]',
+      // Generic semantic
+      'article', 'main[role="main"]', '[role="main"]', 'main',
+      // IDs
+      '#article-body', '#article-content', '#post-content', '#entry-content',
+      '#main-content', '#content-area', '#primary-content'
+    ];
+
+    for (const selector of contentSelectors) {
+      const el = bodyClone.querySelector(selector);
+      if (el && el.textContent.trim().length > 300) {
+        bestNode = el;
+        console.log(`GLS: bestNode found via selector "${selector}"`);
+        break;
+      }
+    }
+
+    // Scoring fallback: find the element with most paragraph content
+    if (!bestNode) {
       let highestScore = 0;
-      bodyClone.querySelectorAll('div, section').forEach(node => {
-        let score = 0;
-        score += node.querySelectorAll('p').length * 10;
-        score += Math.min(Math.floor(node.textContent.trim().length / 100), 50);
-        score -= node.querySelectorAll('a').length * 2;
+      bodyClone.querySelectorAll('div, section, article').forEach(node => {
+        // Skip tiny or navigation-like nodes
+        if (node.textContent.trim().length < 200) return;
+        const pCount = node.querySelectorAll('p').length;
+        const aCount = node.querySelectorAll('a').length;
+        if (pCount === 0) return;
+
+        let score = pCount * 15;
+        score += Math.min(Math.floor(node.textContent.trim().length / 80), 60);
+        score -= aCount * 3;
+        // Boost nodes with class names suggesting content
+        const cls = (node.className || '') + (node.id || '');
+        if (/content|article|post|story|entry|body/i.test(cls)) score += 30;
+        if (/nav|header|footer|sidebar|menu|ad|promo/i.test(cls)) score -= 50;
+
         if (score > highestScore) {
           highestScore = score;
           bestNode = node;
         }
       });
+      if (bestNode) console.log(`GLS: bestNode found via scoring (score=${highestScore})`);
     }
 
     if (!bestNode || bestNode.textContent.trim().length < 200) {
@@ -92,6 +119,7 @@
     // Strategy A: Split by H2 headings
     if (allH2s.length >= 2) {
       let currentHeading = "Introduction";
+      let currentHeadingHtml = ''; // The actual h2 HTML to prepend to each section
       let currentParts = [];
 
       for (const child of bestNode.childNodes) {
@@ -102,16 +130,18 @@
         const containsH2 = !isH2 && child.querySelector && child.querySelector('h2');
         
         if (isH2 || containsH2) {
-          // Flush the current section
+          // Flush the current section (include the heading HTML at the start)
           if (currentParts.length > 0) {
             const html = currentParts.join('');
             if (html.replace(/<[^>]*>/g, '').trim().length > 30) {
-              sections.push({ heading: currentHeading, html: html });
+              sections.push({ heading: currentHeading, html: currentHeadingHtml + html });
             }
           }
-          // Get the heading text from the h2 element itself
+          // Get the heading text and HTML
           const h2El = isH2 ? child : child.querySelector('h2');
           currentHeading = h2El.textContent.trim();
+          // Render the heading cleanly (strip edit links etc)
+          currentHeadingHtml = `<h2>${currentHeading}</h2>`;
           currentParts = [];
         } else {
           // Regular content element
@@ -125,35 +155,39 @@
       if (currentParts.length > 0) {
         const html = currentParts.join('');
         if (html.replace(/<[^>]*>/g, '').trim().length > 30) {
-          sections.push({ heading: currentHeading, html: html });
+          sections.push({ heading: currentHeading, html: currentHeadingHtml + html });
         }
       }
 
       console.log(`Guided Learning Sandbox: H2 strategy produced ${sections.length} sections.`);
     }
 
-    // Strategy B: Split by H3 headings
+    // Strategy B: Split by H3 headings (also handle wrapped h3s like div.mw-heading)
     if (sections.length < 2) {
       sections.length = 0;
       if (allH3s.length >= 2) {
         let currentHeading = "Introduction";
+        let currentHeadingHtml = '';
         let currentParts = [];
 
         for (const child of bestNode.childNodes) {
-          if (child.nodeType === Node.ELEMENT_NODE) {
-            if (child.tagName === 'H3') {
-              if (currentParts.length > 0) {
-                sections.push({ heading: currentHeading, html: currentParts.join('') });
-              }
-              currentHeading = child.textContent.trim();
-              currentParts = [];
-            } else if (child.textContent.trim().length > 0) {
-              currentParts.push(child.outerHTML || '');
+          if (child.nodeType !== Node.ELEMENT_NODE) continue;
+          const isH3 = child.tagName === 'H3';
+          const containsH3 = !isH3 && child.querySelector && child.querySelector('h3');
+          if (isH3 || containsH3) {
+            if (currentParts.length > 0) {
+              sections.push({ heading: currentHeading, html: currentHeadingHtml + currentParts.join('') });
             }
+            const h3El = isH3 ? child : child.querySelector('h3');
+            currentHeading = h3El.textContent.trim();
+            currentHeadingHtml = `<h3>${currentHeading}</h3>`;
+            currentParts = [];
+          } else if (child.textContent.trim().length > 0) {
+            currentParts.push(child.outerHTML || '');
           }
         }
         if (currentParts.length > 0) {
-          sections.push({ heading: currentHeading, html: currentParts.join('') });
+          sections.push({ heading: currentHeading, html: currentHeadingHtml + currentParts.join('') });
         }
         console.log(`Guided Learning Sandbox: H3 strategy produced ${sections.length} sections.`);
       }

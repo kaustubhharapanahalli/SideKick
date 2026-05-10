@@ -29,6 +29,8 @@ const els = {
   resourceContent: document.getElementById('resourceContent'),
   progressText:    document.getElementById('progressText'),
   progressBar:     document.getElementById('progressBar'),
+  sectionNav:      document.getElementById('sectionNav'),
+  sectionsToggle:  document.getElementById('sectionsToggle'),
   sectionSummary:  document.getElementById('sectionSummary'),
   markReviewedBtn: document.getElementById('markReviewedBtn'),
   questionArea:    document.getElementById('questionArea'),
@@ -39,6 +41,14 @@ const els = {
   validationHint:  document.getElementById('validationHint'),
   tutorLoader:     document.getElementById('tutorLoader')
 };
+
+// Wire up the Sections toggle button (in left pane header)
+if (els.sectionsToggle) {
+  els.sectionsToggle.addEventListener('click', () => {
+    const isOpen = els.sectionNav.classList.toggle('open');
+    els.sectionsToggle.classList.toggle('open', isOpen);
+  });
+}
 
 // -------------------------------------------------------------------
 // INITIALIZATION
@@ -85,33 +95,63 @@ function renderYouTubeViewer() {
     return;
   }
 
-  // Embed iframe with enablejsapi and origin for postMessage control
-  const extensionOrigin = chrome.runtime.getURL('').slice(0, -1); // Remove trailing slash
+  const vid = state.sessionData.videoId;
+
+  // Use youtube-nocookie.com (privacy-enhanced mode) with enablejsapi
+  // Do NOT pass origin=chrome-extension:// — YouTube rejects non-http origins
+  // postMessage still works without origin param for the JS API commands
   els.resourceContent.innerHTML = `
-    <div class="video-container">
+    <div class="video-container" id="video-container">
       <iframe id="yt-iframe"
-              src="https://www.youtube.com/embed/${state.sessionData.videoId}?enablejsapi=1&origin=${encodeURIComponent(extensionOrigin)}&playsinline=1&rel=0"
+              src="https://www.youtube-nocookie.com/embed/${vid}?enablejsapi=1&playsinline=1&rel=0&modestbranding=1"
               frameborder="0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               allowfullscreen>
       </iframe>
+    </div>
+    <div id="embed-error" style="display:none; padding:20px; text-align:center; color:#94A3B8;">
+      <p style="font-size:16px; margin-bottom:12px;">⚠️ This video cannot be embedded (embedding disabled by owner).</p>
+      <p style="margin-bottom:16px;">You can still study from the transcript — <strong>the questions and sections work normally.</strong></p>
+      <a href="https://www.youtube.com/watch?v=${vid}" target="_blank"
+         style="color:#00F0FF; text-decoration:none; border-bottom:1px solid rgba(0,240,255,0.4); padding-bottom:2px;">
+        Watch on YouTube ↗
+      </a>
     </div>`;
 
-  // Set up the gating listener
   const iframe = document.getElementById('yt-iframe');
-  iframe.onload = () => {
-    // Tell YouTube we are listening
-    iframe.contentWindow.postMessage(JSON.stringify({ event: 'listening' }), 'https://www.youtube.com');
-  };
 
+  // Detect embed errors (Error 150/151/153 = embedding not allowed)
+  iframe.addEventListener('error', () => {
+    document.getElementById('embed-error').style.display = 'block';
+    document.getElementById('video-container').style.display = 'none';
+  });
+
+  // Listen for YouTube iframe API messages
   window.addEventListener('message', (event) => {
-    if (event.origin !== 'https://www.youtube.com') return;
+    if (!event.origin.includes('youtube')) return;
     try {
       const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+
+      // YouTube sends error codes via the iframe API
+      if (data.event === 'video-not-started' || 
+          (data.info && [100, 101, 150, 151, 153].includes(data.info.error))) {
+        document.getElementById('embed-error').style.display = 'block';
+        document.getElementById('video-container').style.display = 'none';
+        return;
+      }
+
       if (data.event === 'infoDelivery' && data.info && data.info.currentTime != null) {
         handleYouTubeTimeUpdate(data.info.currentTime);
       }
     } catch (e) { /* Ignore non-JSON messages */ }
+  });
+
+  // Tell YouTube we are listening (enables the iframe JS API)
+  iframe.addEventListener('load', () => {
+    iframe.contentWindow.postMessage(
+      JSON.stringify({ event: 'listening' }),
+      'https://www.youtube-nocookie.com'
+    );
   });
 }
 
@@ -126,7 +166,7 @@ function handleYouTubeTimeUpdate(currentTime) {
     if (iframe && iframe.contentWindow) {
       iframe.contentWindow.postMessage(
         JSON.stringify({ event: 'command', func: 'pauseVideo' }),
-        'https://www.youtube.com'
+        '*'
       );
     }
     // Draw attention to the "Mark as Reviewed" button
@@ -140,12 +180,11 @@ function youtubeSeekTo(seconds) {
   if (iframe && iframe.contentWindow) {
     iframe.contentWindow.postMessage(
       JSON.stringify({ event: 'command', func: 'seekTo', args: [seconds, true] }),
-      'https://www.youtube.com'
+      '*'
     );
-    // Also play the video
     iframe.contentWindow.postMessage(
       JSON.stringify({ event: 'command', func: 'playVideo' }),
-      'https://www.youtube.com'
+      '*'
     );
   }
 }
@@ -155,10 +194,12 @@ function youtubeSeekTo(seconds) {
 // -------------------------------------------------------------------
 function renderArticleSection(section) {
   if (section.rawTextChunk) {
-    // rawTextChunk contains HTML from the extractor — render it directly
+    // rawTextChunk now contains the heading HTML at the top (added by extractor)
     els.resourceContent.innerHTML = `<div class="article-section-content">${section.rawTextChunk}</div>`;
   } else {
-    els.resourceContent.innerHTML = `<div class="article-section-content"><p>${section.summary || 'No content available.'}</p></div>`;
+    // Fallback: render with title as heading
+    const headingHtml = section.title ? `<h2 class="article-section-heading">${section.title}</h2>` : '';
+    els.resourceContent.innerHTML = `<div class="article-section-content">${headingHtml}<p>${section.summary || 'No content available.'}</p></div>`;
   }
   els.resourceContent.scrollTop = 0;
 }
@@ -174,6 +215,9 @@ function updateUI() {
   // Progress
   els.progressText.textContent = `Section ${state.currentIndex + 1} of ${state.sections.length}`;
   els.progressBar.style.width = `${((state.currentIndex + 1) / state.sections.length) * 100}%`;
+
+  // Section Navigator — show all sections as clickable chips
+  renderSectionNav();
 
   // Summary
   els.sectionSummary.innerHTML = `<strong>${current.title}</strong><br><br>${current.summary}`;
@@ -195,6 +239,44 @@ function updateUI() {
   } else {
     renderArticleSection(current);
   }
+}
+
+function renderSectionNav() {
+  if (!els.sectionNav || state.sections.length === 0) {
+    if (els.sectionNav) els.sectionNav.classList.remove('open');
+    if (els.sectionsToggle) els.sectionsToggle.style.display = 'none';
+    return;
+  }
+
+  // Show the toggle button
+  if (els.sectionsToggle) els.sectionsToggle.style.display = 'flex';
+
+  els.sectionNav.innerHTML = state.sections.map((section, i) => {
+    const isActive = i === state.currentIndex;
+    const isCompleted = i < state.currentIndex;
+    let cls = 'section-nav-item';
+    if (isActive) cls += ' active';
+    if (isCompleted) cls += ' completed';
+    return `<button class="${cls}" data-index="${i}" title="${section.title}">
+      <span class="section-nav-num">${i + 1}</span>
+      <span class="section-nav-label">${section.title}</span>
+    </button>`;
+  }).join('');
+
+  // All sections are clickable (user can navigate back AND forward for articles)
+  els.sectionNav.querySelectorAll('.section-nav-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.index);
+      // Allow navigation to completed/current, and also forward for articles
+      if (state.sessionData.type !== 'youtube' || idx <= state.currentIndex) {
+        state.currentIndex = idx;
+        updateUI();
+        // Close the dropdown after selection
+        els.sectionNav.classList.remove('open');
+        if (els.sectionsToggle) els.sectionsToggle.classList.remove('open');
+      }
+    });
+  });
 }
 
 function showError(msg) {
