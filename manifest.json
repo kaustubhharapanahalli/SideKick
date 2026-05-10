@@ -1,27 +1,27 @@
 {
   "manifest_version": 3,
   "name": "Guided Learning Sandbox",
-  "version": "1.0.0",
-  "description": "Transforms web resources into a structured, gated learning environment using Gemini.",
+  "version": "2.0.0",
+  "description": "A side-panel tutor that guides you through YouTube videos and articles with AI-generated questions.",
   "permissions": [
     "storage",
     "scripting",
     "activeTab",
-    "tabs"
+    "tabs",
+    "sidePanel"
   ],
   "host_permissions": [
     "<all_urls>",
-    "*://*.youtube.com/*",
-    "*://*.youtube-nocookie.com/*"
+    "*://*.youtube.com/*"
   ],
-  "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; frame-src https://www.youtube-nocookie.com https://www.youtube.com;"
-  },
   "background": {
     "service_worker": "scripts/background.js"
   },
+  "side_panel": {
+    "default_path": "src/sidepanel.html"
+  },
   "action": {
-    "default_title": "Start Study Session"
+    "default_title": "Open Guided Learning"
   },
   "options_ui": {
     "page": "src/options.html",
