@@ -97,9 +97,6 @@ function renderYouTubeViewer() {
 
   const vid = state.sessionData.videoId;
 
-  // Use youtube-nocookie.com (privacy-enhanced mode) with enablejsapi
-  // Do NOT pass origin=chrome-extension:// — YouTube rejects non-http origins
-  // postMessage still works without origin param for the JS API commands
   els.resourceContent.innerHTML = `
     <div class="video-container" id="video-container">
       <iframe id="yt-iframe"
@@ -109,50 +106,80 @@ function renderYouTubeViewer() {
               allowfullscreen>
       </iframe>
     </div>
-    <div id="embed-error" style="display:none; padding:20px; text-align:center; color:#94A3B8;">
-      <p style="font-size:16px; margin-bottom:12px;">⚠️ This video cannot be embedded (embedding disabled by owner).</p>
-      <p style="margin-bottom:16px;">You can still study from the transcript — <strong>the questions and sections work normally.</strong></p>
-      <a href="https://www.youtube.com/watch?v=${vid}" target="_blank"
-         style="color:#00F0FF; text-decoration:none; border-bottom:1px solid rgba(0,240,255,0.4); padding-bottom:2px;">
+    <div id="embed-error" class="embed-error-box" style="display:none;">
+      <div style="font-size:36px; margin-bottom:16px;">🔒</div>
+      <h3 style="color:#E2E8F0; font-size:18px; margin:0 0 10px;">Video Cannot Be Embedded</h3>
+      <p style="color:#64748B; font-size:14px; margin:0 0 20px; line-height:1.6;">
+        The video owner has disabled embedding for this video (Error 153).<br>
+        <strong style="color:#94A3B8;">The transcript, questions, and sections all work normally.</strong>
+      </p>
+      <a href="https://www.youtube.com/watch?v=${vid}" target="_blank" class="watch-yt-btn">
         Watch on YouTube ↗
       </a>
     </div>`;
 
   const iframe = document.getElementById('yt-iframe');
+  let playerReady = false;
+  let errorShown = false;
 
-  // Detect embed errors (Error 150/151/153 = embedding not allowed)
-  iframe.addEventListener('error', () => {
-    document.getElementById('embed-error').style.display = 'block';
-    document.getElementById('video-container').style.display = 'none';
-  });
+  function showEmbedError() {
+    if (errorShown) return;
+    errorShown = true;
+    const errEl = document.getElementById('embed-error');
+    const vcEl = document.getElementById('video-container');
+    if (errEl) errEl.style.display = 'flex';
+    if (vcEl) vcEl.style.display = 'none';
+  }
 
-  // Listen for YouTube iframe API messages
+  // YouTube postMessage error codes: event = 'onError', info = error_code (plain number)
+  // Error 100 = video not found, 101/150 = embedding not allowed, 153 = restricted
   window.addEventListener('message', (event) => {
     if (!event.origin.includes('youtube')) return;
     try {
       const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
 
-      // YouTube sends error codes via the iframe API
-      if (data.event === 'video-not-started' || 
-          (data.info && [100, 101, 150, 151, 153].includes(data.info.error))) {
-        document.getElementById('embed-error').style.display = 'block';
-        document.getElementById('video-container').style.display = 'none';
+      // onError: data.info is the plain error code number
+      if (data.event === 'onError') {
+        console.warn('YouTube player error code:', data.info);
+        if ([100, 101, 150, 151, 153].includes(Number(data.info))) {
+          showEmbedError();
+        }
         return;
       }
 
+      // Player ready
+      if (data.event === 'onReady') {
+        playerReady = true;
+      }
+
+      // Time update for section gating
       if (data.event === 'infoDelivery' && data.info && data.info.currentTime != null) {
         handleYouTubeTimeUpdate(data.info.currentTime);
       }
-    } catch (e) { /* Ignore non-JSON messages */ }
+    } catch (e) { /* Ignore non-JSON */ }
   });
+
+  // Auto-fallback: if no 'onReady' event fires within 8s, assume embedding is blocked
+  const readyTimeout = setTimeout(() => {
+    if (!playerReady) {
+      console.warn('YouTube player did not fire onReady in 8s — assuming embed blocked.');
+      showEmbedError();
+    }
+  }, 8000);
 
   // Tell YouTube we are listening (enables the iframe JS API)
   iframe.addEventListener('load', () => {
-    iframe.contentWindow.postMessage(
-      JSON.stringify({ event: 'listening' }),
-      'https://www.youtube-nocookie.com'
-    );
+    iframe.contentWindow.postMessage(JSON.stringify({ event: 'listening' }), '*');
+    // Request player state to trigger the onReady/onError events
+    setTimeout(() => {
+      if (!playerReady && iframe.contentWindow) {
+        iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'getPlayerState' }), '*');
+      }
+    }, 2000);
   });
+
+  iframe.addEventListener('error', showEmbedError);
+
 }
 
 function handleYouTubeTimeUpdate(currentTime) {
