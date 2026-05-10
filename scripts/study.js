@@ -192,8 +192,47 @@ function showValidationHint(msg, isSuccess) {
   void els.validationHint.offsetWidth;
 }
 
+function splitArticleIntoChunks(text, targetCount = 5) {
+  // Strategy 1: Split by Heading markers (Semantic Sections)
+  // Look for [[H2]] markers I just added to the extractor
+  const h2Sections = text.split(/\\n\\n(?=\[\[H2\]\])/i).filter(s => s.trim().length > 0);
+  
+  if (h2Sections.length >= 2) {
+    return h2Sections.slice(0, 10).map(s => ({ 
+      rawTextChunk: s.replace(/\[\[H[1-6]\]\]/g, '').trim() 
+    }));
+  }
+
+  // Strategy 2: Fallback to Paragraph-based splitting
+  let paragraphs = text.split(/\\n\\n+/).filter(p => p.trim().length > 0);
+  
+  // If no double newlines found, try single newlines
+  if (paragraphs.length <= 1) {
+    paragraphs = text.split(/\\n+/).filter(p => p.trim().length > 0);
+  }
+
+  if (paragraphs.length === 0) return [{ rawTextChunk: text }];
+  
+  const count = Math.min(targetCount, paragraphs.length);
+  const chunks = [];
+  const pPerChunk = Math.ceil(paragraphs.length / count);
+  
+  for (let i = 0; i < count; i++) {
+    const start = i * pPerChunk;
+    const end = (i === count - 1) ? paragraphs.length : (i + 1) * pPerChunk;
+    const slice = paragraphs.slice(start, end);
+    if (slice.length > 0) {
+      chunks.push({ 
+        rawTextChunk: slice.join('\\n\\n').replace(/\[\[H[1-6]\]\]/g, '').trim() 
+      });
+    }
+  }
+  
+  return chunks;
+}
+
 // ------------------------------------------------------------------
-// MOCK AI PIPELINE (To be replaced in Workflows A, B, C, D)
+// AI PIPELINE
 // ------------------------------------------------------------------
 
 async function startSectionerPipeline() {
@@ -201,40 +240,67 @@ async function startSectionerPipeline() {
   
   try {
     const client = new GeminiClient(state.apiKey);
+    const isYouTube = state.sessionData.type === 'youtube';
     
-    // Format the payload for the prompt
-    let contentContext = "";
-    if (state.sessionData.type === 'youtube') {
-      // It's an array of transcript objects
-      contentContext = state.sessionData.content.map(c => `[${c.startTimestamp}s]: ${c.text}`).join('\\n');
+    if (isYouTube) {
+      // YouTube still needs intelligent topic-based segmentation
+      const contentContext = state.sessionData.content.map(c => `[${c.startTimestamp}s]: ${c.text}`).join('\\n');
+      
+      const systemInstruction = `You are an expert tutor. Analyze the provided YouTube transcript and break it down into 3 to 5 logical sections.
+For each section, provide a concise but descriptive title, a 2-3 sentence summary, and the accurate starting timestamp.`;
+
+      const prompt = `Please segment the following transcript into a learning curriculum:\\n\\n${contentContext}`;
+
+      const responseSchema = {
+        type: "ARRAY",
+        items: {
+          type: "OBJECT",
+          properties: {
+            title: { type: "STRING" },
+            summary: { type: "STRING" },
+            startTimestamp: { type: "NUMBER" }
+          },
+          required: ["title", "summary", "startTimestamp"]
+        }
+      };
+
+      state.sections = await client.generateContent(prompt, systemInstruction, responseSchema);
     } else {
-      contentContext = state.sessionData.content;
+      // Articles use JS-based splitting for 100% verbatim accuracy
+      const chunks = splitArticleIntoChunks(state.sessionData.content, 5);
+      
+      // We pass only the first 1000 chars of each chunk to Gemini to get metadata.
+      // This prevents massive token bloat and timeouts for long articles.
+      const contentContext = chunks.map((c, i) => `[SECTION ${i+1}]: ${c.rawTextChunk.substring(0, 1000)}...`).join('\\n\\n');
+      
+      const systemInstruction = `You are an expert tutor. I have split an article into ${chunks.length} sections for a student.
+Your task is to generate a descriptive title and a 2-3 sentence summary for each section based on the provided text snippets.`;
+
+      const prompt = `Please provide titles and summaries for these ${chunks.length} sections:\\n\\n${contentContext}`;
+
+      const responseSchema = {
+        type: "ARRAY",
+        items: {
+          type: "OBJECT",
+          properties: {
+            title: { type: "STRING" },
+            summary: { type: "STRING" }
+          },
+          required: ["title", "summary"]
+        }
+      };
+
+      const metadata = await client.generateContent(prompt, systemInstruction, responseSchema);
+      
+      // Merge JS chunks with Gemini metadata
+      state.sections = chunks.map((chunk, i) => ({
+        ...chunk,
+        title: metadata[i] ? metadata[i].title : `Section ${i+1}`,
+        summary: metadata[i] ? metadata[i].summary : "Review this section to proceed.",
+        startTimestamp: 0
+      }));
     }
-
-    const systemInstruction = `You are an expert tutor. Your task is to analyze the provided educational material and break it down into 3 to 5 logical sections for a structured learning session.
-For each section, provide a concise but descriptive title, and a 2-3 sentence summary of the core concepts covered in that section.
-If the material has timestamps (like a YouTube transcript), extract the accurate starting timestamp for that section. If it's a standard article, set startTimestamp to 0.
-Crucially, you must also provide the 'rawTextChunk'. This MUST be the exact, verbatim block of original text that corresponds to this section. Do not summarize the rawTextChunk, output the actual source text.`;
-
-    const prompt = `Please segment the following content into a learning curriculum.\\n\\nContent:\\n${contentContext}`;
-
-    const responseSchema = {
-      type: "ARRAY",
-      items: {
-        type: "OBJECT",
-        properties: {
-          title: { type: "STRING", description: "Short, descriptive title of the section." },
-          summary: { type: "STRING", description: "A robust 2-3 sentence summary of what this section teaches." },
-          startTimestamp: { type: "NUMBER", description: "The starting timestamp in seconds. Use 0 if it is an article." },
-          rawTextChunk: { type: "STRING", description: "The verbatim original text belonging to this section." }
-        },
-        required: ["title", "summary", "startTimestamp", "rawTextChunk"]
-      }
-    };
-
-    const sections = await client.generateContent(prompt, systemInstruction, responseSchema);
     
-    state.sections = sections;
     hideLoader();
     updateUI();
 

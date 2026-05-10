@@ -4,31 +4,52 @@
   console.log("Guided Learning Sandbox: YouTube Extractor injected.");
 
   try {
-    // 1. Extract ytInitialPlayerResponse from the page source
-    // YouTube dynamically loads content, but the initial response is usually in a script tag.
-    let playerResponse = null;
-    
-    // Sometimes it's available globally if we are in the main world, but content scripts run in isolated worlds.
-    // So we need to parse the DOM's script tags.
-    const scripts = document.getElementsByTagName('script');
-    for (let script of scripts) {
-      if (script.textContent && script.textContent.includes('var ytInitialPlayerResponse = ')) {
-        const match = script.textContent.match(/var ytInitialPlayerResponse = ({.*?});/);
-        if (match && match[1]) {
-          playerResponse = JSON.parse(match[1]);
-          break;
-        }
-      }
-    }
+    let playerResponse = await new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.textContent = `
+        (function() {
+          try {
+            let pr = window.ytInitialPlayerResponse;
+            if (!pr && window.ytplayer && window.ytplayer.config && window.ytplayer.config.args && window.ytplayer.config.args.raw_player_response) {
+              pr = JSON.parse(window.ytplayer.config.args.raw_player_response);
+            }
+            window.dispatchEvent(new CustomEvent('GLS_PlayerResponse', { detail: pr ? JSON.stringify(pr) : null }));
+          } catch(e) {
+            window.dispatchEvent(new CustomEvent('GLS_PlayerResponse', { detail: null }));
+          }
+        })();
+      `;
+      
+      const listener = (event) => {
+        window.removeEventListener('GLS_PlayerResponse', listener);
+        script.remove();
+        resolve(event.detail ? JSON.parse(event.detail) : null);
+      };
+      
+      window.addEventListener('GLS_PlayerResponse', listener);
+      (document.head || document.documentElement).appendChild(script);
+      
+      setTimeout(() => {
+        window.removeEventListener('GLS_PlayerResponse', listener);
+        if (script.parentNode) script.remove();
+        resolve(null);
+      }, 1000); // Shorter timeout for the injection attempt
+    });
 
     if (!playerResponse) {
-      // Fallback: Check if we can fetch it via the internal API if we have the video ID
+      console.log("Guided Learning Sandbox: Script injection failed, falling back to HTML fetch...");
       const videoId = new URLSearchParams(window.location.search).get('v');
-      if (!videoId) {
-        throw new Error("No video ID found in URL.");
+      if (!videoId) throw new Error("No video ID found in URL.");
+      
+      const response = await fetch(`https://www.youtube.com/watch?v=${videoId}`);
+      const htmlText = await response.text();
+      const match = htmlText.match(/ytInitialPlayerResponse\s*=\s*({.*?});/);
+      
+      if (match && match[1]) {
+        playerResponse = JSON.parse(match[1]);
+      } else {
+        throw new Error("Could not find ytInitialPlayerResponse. This video might be restricted or private.");
       }
-      // If we can't find it in the script, we might have to fail gracefully for now.
-      throw new Error("ytInitialPlayerResponse not found in page source.");
     }
 
     // 2. Find the caption tracks
@@ -116,9 +137,9 @@
         videoId: videoId,
         content: combinedData
       }
-    }, () => {
-      console.log("Guided Learning Sandbox: Payload saved to storage. Video ID:", videoId);
     });
+    // Explicitly clear error
+    chrome.storage.local.remove('currentStudySessionError');
 
     return combinedData;
 

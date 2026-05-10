@@ -21,6 +21,9 @@ chrome.action.onClicked.addListener(async (tab) => {
     scriptToInject = 'scripts/youtube_extractor.js';
   }
 
+  // Clear previous session data/errors before starting a new one
+  await chrome.storage.local.remove(['currentStudySession', 'currentStudySessionError']);
+
   try {
     console.log(`Injecting ${scriptToInject} into tab ${tab.id}...`);
     

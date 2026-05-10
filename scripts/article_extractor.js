@@ -82,12 +82,26 @@
       bestNode = bodyClone;
     }
 
-    // 5. Clean up the final text content
-    // Replace multiple newlines and spaces
-    let cleanText = bestNode.textContent
-      .replace(/\\n\\s*\\n/g, '\\n\\n') // Normalize multiple newlines
-      .replace(/\\t/g, '')             // Remove tabs
-      .replace(/ {2,}/g, ' ')          // Remove multiple spaces
+    // 5. Preserve Headings by marking them
+    const headings = bestNode.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    headings.forEach(h => {
+      const level = h.tagName.toLowerCase();
+      // We use a unique marker that is easy to split by
+      h.innerHTML = `[[${level.toUpperCase()}]] ${h.innerText}`;
+    });
+
+    // 6. Clean up the final text content
+    // We use a trick to preserve line breaks: replace <p> and <br> with newlines before getting textContent
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = bestNode.innerHTML
+      .replace(/<\/p>/g, '\n\n')
+      .replace(/<br\s*\/?>/g, '\n')
+      .replace(/<h[1-6][^>]*>/g, '\n\n')
+      .replace(/<\/h[1-6]>/g, '\n\n');
+      
+    let cleanText = tempDiv.textContent
+      .replace(/\n\s*\n/g, '\n\n') // Normalize multiple newlines
+      .replace(/[ \t]+/g, ' ')      // Normalize spaces
       .trim();
 
     const payload = {
@@ -99,11 +113,11 @@
 
     console.log("Guided Learning Sandbox: Extraction complete.", payload.title);
     
+    // Explicitly clear error
+    chrome.storage.local.remove('currentStudySessionError');
     // Save to storage for testing/background orchestrator
     chrome.storage.local.set({ 
       currentStudySession: payload
-    }, () => {
-      console.log("Guided Learning Sandbox: Payload saved to storage.");
     });
 
     return payload;

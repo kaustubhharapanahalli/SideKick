@@ -3,24 +3,36 @@
 class GeminiClient {
   constructor(apiKey) {
     this.apiKey = apiKey;
-    this.baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+    this.baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent";
   }
 
   async generateContent(prompt, systemInstruction = null, responseSchema = null, retries = 2) {
     if (!this.apiKey) throw new Error("Gemini API Key is missing.");
 
+    const isGemma = this.baseUrl.toLowerCase().includes('gemma');
+    let finalPrompt = prompt;
+
+    if (isGemma) {
+      if (systemInstruction) {
+        finalPrompt = `[System Instructions]: ${systemInstruction}\\n\\n[User Request]: ${prompt}`;
+      }
+      if (responseSchema) {
+        finalPrompt += `\\n\\nIMPORTANT: You MUST respond ONLY with valid JSON. Do not include any introductory text, explanations, or markdown code blocks. Output ONLY the raw JSON string that strictly matches this schema:\\n${JSON.stringify(responseSchema)}`;
+      }
+    }
+
     const payload = {
-      contents: [{ role: "user", parts: [{ text: prompt }] }]
+      contents: [{ role: "user", parts: [{ text: finalPrompt }] }]
     };
 
-    if (systemInstruction) {
+    if (systemInstruction && !isGemma) {
       payload.systemInstruction = {
         role: "system",
         parts: [{ text: systemInstruction }]
       };
     }
 
-    if (responseSchema) {
+    if (responseSchema && !isGemma) {
       payload.generationConfig = {
         responseMimeType: "application/json",
         responseSchema: responseSchema
@@ -56,12 +68,28 @@ class GeminiClient {
         if (responseSchema) {
           try {
             let cleanText = textOutput.trim();
-            if (cleanText.startsWith('```')) {
-              cleanText = cleanText.replace(/^```(?:json)?\\n?/i, '').replace(/\\n?```$/i, '');
+            
+            // Robustly find the start and end of the JSON blob based on expected type
+            let start = -1;
+            let end = -1;
+
+            if (responseSchema.type === "ARRAY") {
+              start = cleanText.indexOf('[');
+              end = cleanText.lastIndexOf(']');
+            } else {
+              start = cleanText.indexOf('{');
+              end = cleanText.lastIndexOf('}');
             }
+
+            if (start !== -1 && end !== -1 && end > start) {
+              cleanText = cleanText.substring(start, end + 1);
+            }
+
+            return JSON.parse(cleanText);
+
             return JSON.parse(cleanText);
           } catch (parseError) {
-            throw new Error(`Failed to parse Gemini JSON output: ${parseError.message}. Raw output: ${textOutput}`);
+            throw new Error(`Failed to parse Gemini JSON output: ${parseError.message}. Check console for raw output.`);
           }
         }
         return textOutput;
