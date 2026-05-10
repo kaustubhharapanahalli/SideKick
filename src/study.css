@@ -141,6 +141,98 @@ body {
   border: none;
 }
 
+/* Article Section Content — preserves extracted HTML styling */
+.article-section-content {
+  color: #E2E8F0;
+  font-size: 17px;
+  line-height: 1.85;
+  font-weight: 300;
+}
+
+.article-section-content h1,
+.article-section-content h2,
+.article-section-content h3,
+.article-section-content h4 {
+  color: #fff;
+  font-weight: 600;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  line-height: 1.3;
+}
+
+.article-section-content h3 {
+  font-size: 1.25em;
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.article-section-content p {
+  margin-bottom: 1em;
+}
+
+.article-section-content a {
+  color: #00F0FF;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(0, 240, 255, 0.3);
+  transition: border-color 0.2s;
+}
+
+.article-section-content a:hover {
+  border-bottom-color: #00F0FF;
+}
+
+.article-section-content ul,
+.article-section-content ol {
+  padding-left: 1.5em;
+  margin-bottom: 1em;
+}
+
+.article-section-content li {
+  margin-bottom: 0.4em;
+}
+
+.article-section-content blockquote {
+  border-left: 3px solid #5200FF;
+  padding-left: 1em;
+  margin: 1em 0;
+  color: #94A3B8;
+  font-style: italic;
+}
+
+.article-section-content sup {
+  font-size: 0.7em;
+  color: #64748B;
+}
+
+.article-section-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+}
+
+.article-section-content th,
+.article-section-content td {
+  padding: 8px 12px;
+  border: 1px solid rgba(255,255,255,0.08);
+  text-align: left;
+}
+
+.article-section-content th {
+  background: rgba(255,255,255,0.05);
+  font-weight: 600;
+}
+
+/* Bounce animation for Mark as Reviewed button */
+.btn.bounce {
+  animation: btnBounce 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes btnBounce {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); box-shadow: 0 0 30px rgba(0, 240, 255, 0.4); }
+}
+
 /* Right Pane: Tutor UI */
 .tutor-pane {
   position: relative;
