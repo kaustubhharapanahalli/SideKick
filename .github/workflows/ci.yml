@@ -1,0 +1,90 @@
+name: CI — Guided Learning Sandbox
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test & Validate
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [20, 22]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage artifact
+        if: matrix.node-version == 22
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
+
+  validate-manifest:
+    name: Validate Manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate JSON syntax
+        run: python3 -c "import json; json.load(open('manifest.json'))"
+
+      - name: Check manifest_version is 3
+        run: |
+          VERSION=$(python3 -c "import json; print(json.load(open('manifest.json'))['manifest_version'])")
+          [ "$VERSION" = "3" ] || (echo "ERROR: manifest_version must be 3" && exit 1)
+
+  package:
+    name: Package Extension
+    runs-on: ubuntu-latest
+    needs: [test, validate-manifest]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create distribution ZIP
+        run: |
+          mkdir -p dist
+          zip -r dist/guided-learning-sandbox.zip \
+            manifest.json \
+            scripts/background.js \
+            scripts/content_bridge.js \
+            scripts/gemini_api.js \
+            scripts/options.js \
+            scripts/sidepanel.js \
+            src/sidepanel.html \
+            src/sidepanel.css \
+            src/options.html \
+            src/options.css \
+            assets/ \
+            -x "*.DS_Store"
+
+      - name: Upload extension ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-zip
+          path: dist/guided-learning-sandbox.zip
+          retention-days: 30

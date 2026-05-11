@@ -23,7 +23,6 @@
     // --- Strategy 1: Native Chapters from DOM ---
     const chapters = extractChaptersFromDOM();
     if (chapters.length > 0) {
-      console.log('[GLS Bridge] Found', chapters.length, 'chapters from DOM');
       return {
         type: 'youtube',
         videoId,
@@ -36,7 +35,6 @@
     // --- Strategy 2: Chapters from description timestamps ---
     const descChapters = extractChaptersFromDescription();
     if (descChapters.length >= 2) {
-      console.log('[GLS Bridge] Found', descChapters.length, 'chapters from description');
       return {
         type: 'youtube',
         videoId,
@@ -47,7 +45,6 @@
     }
 
     // --- Strategy 3: No chapters → extract transcript for Gemini ---
-    console.log('[GLS Bridge] No chapters found, extracting transcript...');
     const transcript = await extractTranscript(videoId);
     return {
       type: 'youtube',
@@ -102,9 +99,7 @@
           break;
         }
       }
-    } catch (e) {
-      console.warn('[GLS Bridge] Chapter parse error:', e);
-    }
+    } catch (e) { /* Chapter data unavailable */ }
 
     return chapters;
   }
@@ -148,7 +143,6 @@
       });
 
       if (!response || !response.ok) {
-        console.warn('[GLS Bridge] Transcript fetch failed:', response?.error);
         return null;
       }
 
@@ -164,7 +158,6 @@
         .filter(e => e.text.length > 0);
 
     } catch (e) {
-      console.error('[GLS Bridge] Transcript extraction error:', e);
       return null;
     }
   }
@@ -257,7 +250,14 @@
   // ================================================================
   // MESSAGE HANDLING
   // ================================================================
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const messageListener = (message, sender, sendResponse) => {
+    if (message.type === 'CLEANUP') {
+      chrome.runtime.onMessage.removeListener(messageListener);
+      delete window.__glsBridgeLoaded;
+      sendResponse({ ok: true });
+      return false;
+    }
+
     if (message.type === 'DETECT_PAGE') {
       (async () => {
         try {
@@ -301,7 +301,9 @@
       const video = document.querySelector('video');
       sendResponse({ time: video ? video.currentTime : 0 });
     }
-  });
+  };
+  
+  chrome.runtime.onMessage.addListener(messageListener);
 
   // ================================================================
   // UTILITY
@@ -332,5 +334,4 @@
     return results;
   }
 
-  console.log('[GLS Bridge] Content bridge loaded on', isYouTube ? 'YouTube' : 'Article');
 })();

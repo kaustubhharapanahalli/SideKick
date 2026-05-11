@@ -22,10 +22,14 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Extension build outputs (if any build steps are added)
+# Extension build outputs
 dist/
 build/
 *.zip
 *.crx
+
+# Test artifacts
+coverage/
+
 
 .agents

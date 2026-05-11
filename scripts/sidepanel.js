@@ -79,6 +79,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 });
 
+window.addEventListener('unload', () => {
+  // Notify the content script to unregister its listeners when panel closes
+  if (state.tabId) {
+    chrome.tabs.sendMessage(state.tabId, { type: 'CLEANUP' }).catch(() => {});
+  }
+});
+
 async function startDetection() {
   showState('loading');
   els.loaderText.textContent = 'Detecting page content...';
@@ -130,7 +137,6 @@ async function startDetection() {
     await processSections();
 
   } catch (err) {
-    console.error('[GLS] Detection error:', err);
     showError('Failed to analyze page: ' + err.message);
   }
 }
@@ -226,7 +232,6 @@ async function geminiSegmentTranscript(transcript) {
       throw new Error('Gemini returned no sections.');
     }
   } catch (e) {
-    console.error('[GLS] Transcript segmentation failed:', e);
     // Fallback: single section for the whole video
     state.sections = [{
       title: state.pageData.title,
@@ -279,7 +284,6 @@ async function geminiGenerateSummaries() {
       });
     }
   } catch (e) {
-    console.warn('[GLS] Summary generation failed, using headings:', e);
     state.sections.forEach(s => {
       if (!s.summary) s.summary = 'Review this section and mark as reviewed when ready.';
     });
@@ -436,7 +440,6 @@ els.markReviewedBtn.addEventListener('click', async () => {
     els.submitAnswerBtn.disabled = false;
 
   } catch (e) {
-    console.error('[GLS] Question generation failed:', e);
     els.questionText.textContent = 'What are the key takeaways from this section?';
     state.currentQuestion = 'What are the key takeaways from this section?';
     state.currentAnswer = current.summary;
@@ -490,7 +493,6 @@ els.submitAnswerBtn.addEventListener('click', async () => {
     }
 
   } catch (e) {
-    console.error('[GLS] Validation failed:', e);
     els.validationHint.className = 'validation-hint error';
     els.validationHint.textContent = 'Could not validate answer. Please try again.';
     els.submitAnswerBtn.disabled = false;

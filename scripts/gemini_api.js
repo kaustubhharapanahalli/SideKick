@@ -69,7 +69,6 @@ class GeminiClient {
                 delay = parseInt(retryInfo.retryDelay) * 1000 + 1000; // Add 1s buffer
               }
             } catch (e) { /* use default delay */ }
-            console.warn(`Gemini API error (${response.status}). Retrying in ${delay/1000}s... (${i+1}/${retries})`);
             await new Promise(r => setTimeout(r, delay));
             continue;
           }
@@ -107,9 +106,7 @@ class GeminiClient {
 
             return JSON.parse(cleanText);
           } catch (parseError) {
-            console.error("Raw Gemini output:", textOutput);
             if (i < retries) {
-              console.warn(`JSON parse failed, retrying... (${i+1}/${retries})`);
               continue;
             }
             throw new Error(`Failed to parse Gemini JSON: ${parseError.message}`);
@@ -119,7 +116,6 @@ class GeminiClient {
         
       } catch (error) {
         if (i === retries) {
-          console.error("Gemini API call failed permanently:", error);
           throw error;
         }
       }
@@ -161,5 +157,5 @@ class GeminiClient {
   }
 }
 
-// Expose globally for study.js
+// Expose globally for sidepanel.js
 window.GeminiClient = GeminiClient;

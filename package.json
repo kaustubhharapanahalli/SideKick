@@ -1,0 +1,43 @@
+{
+  "name": "guided-learning-sandbox",
+  "version": "2.0.0",
+  "description": "A Chrome extension that transforms YouTube videos and articles into guided learning sessions with AI-generated questions.",
+  "private": true,
+  "scripts": {
+    "test": "jest --verbose",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "node scripts/lint-check.js",
+    "package": "node scripts/package.js"
+  },
+  "keywords": [
+    "chrome-extension",
+    "guided-learning",
+    "gemini-ai",
+    "education"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "devDependencies": {
+    "@jest/globals": "^30.4.1",
+    "jest": "^30.4.2",
+    "jest-environment-jsdom": "^30.4.1",
+    "jsdom": "^29.1.1"
+  },
+  "jest": {
+    "testEnvironment": "jsdom",
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
+    "moduleFileExtensions": [
+      "js",
+      "json"
+    ],
+    "collectCoverageFrom": [
+      "scripts/**/*.js",
+      "!scripts/lint-check.js",
+      "!scripts/package.js"
+    ]
+  }
+}
