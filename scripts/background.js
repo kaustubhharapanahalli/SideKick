@@ -26,14 +26,17 @@ chrome.action.onClicked.addListener(async (tab) => {
 // Proxy fetch requests from content scripts (bypasses CORS)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'FETCH_URL' && message.url) {
-    fetch(message.url)
-      .then(async (resp) => {
-        const text = await resp.text();
-        sendResponse({ ok: resp.ok, status: resp.status, text: text });
-      })
-      .catch((err) => {
-        sendResponse({ ok: false, error: err.message });
-      });
-    return true; // async
+    handleFetchProxy(message.url, sendResponse);
+    return true; // Keep channel open
   }
 });
+
+async function handleFetchProxy(url, sendResponse) {
+  try {
+    const resp = await fetch(url);
+    const text = await resp.text();
+    sendResponse({ ok: resp.ok, status: resp.status, text: text });
+  } catch (err) {
+    sendResponse({ ok: false, error: err.message });
+  }
+}
