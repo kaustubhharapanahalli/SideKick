@@ -16,8 +16,8 @@
   "type": "commonjs",
   "devDependencies": {
     "@jest/globals": "^30.4.1",
-    "jest": "^30.4.2",
-    "jest-environment-jsdom": "^30.4.2",
+    "jest": "^30.4.1",
+    "jest-environment-jsdom": "^30.4.1",
     "jsdom": "^29.1.1"
   },
   "jest": {
