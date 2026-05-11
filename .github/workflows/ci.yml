@@ -1,4 +1,4 @@
-name: CI — Guided Learning Sandbox
+name: CI — Sidekick
 
 on:
   push:
@@ -68,7 +68,7 @@ jobs:
       - name: Create distribution ZIP
         run: |
           mkdir -p dist
-          zip -r dist/guided-learning-sandbox.zip \
+          zip -r dist/sidekick-ai.zip \
             manifest.json \
             scripts/background.js \
             scripts/content_bridge.js \
@@ -86,5 +86,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: extension-zip
-          path: dist/guided-learning-sandbox.zip
+          path: dist/sidekick-ai.zip
           retention-days: 30

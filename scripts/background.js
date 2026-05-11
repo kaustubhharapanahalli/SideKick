@@ -1,4 +1,4 @@
-// background.js — Guided Learning Sandbox Service Worker (Side Panel Architecture)
+// background.js — Sidekick Service Worker (Side Panel Architecture)
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setOptions({ enabled: true });

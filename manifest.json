@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Guided Learning Sandbox",
+  "name": "Sidekick",
   "version": "2.0.0",
-  "description": "A side-panel tutor that guides you through YouTube videos and articles with AI-generated questions.",
+  "description": "Your AI-powered study companion for YouTube videos and articles.",
   "permissions": [
     "storage",
     "scripting",
@@ -21,7 +21,7 @@
     "default_path": "src/sidepanel.html"
   },
   "action": {
-    "default_title": "Open Guided Learning"
+    "default_title": "Open Sidekick"
   },
   "options_ui": {
     "page": "src/options.html",
