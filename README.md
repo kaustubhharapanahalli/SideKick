@@ -1,6 +1,10 @@
 # 🚀 Sidekick
 
 [![CI](https://github.com/kaustubhharapanahalli/SideKick/actions/workflows/ci.yml/badge.svg)](https://github.com/kaustubhharapanahalli/SideKick/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/kaustubhharapanahalli/SideKick)](https://github.com/kaustubhharapanahalli/SideKick/releases)
+[![Manifest V3](https://img.shields.io/badge/Manifest-V3-green.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
+[![Built with Gemini](https://img.shields.io/badge/Built%20with-Gemini-blue.svg)](https://deepmind.google/technologies/gemini/)
+[![GitHub stars](https://img.shields.io/github/stars/kaustubhharapanahalli/SideKick?style=social)](https://github.com/kaustubhharapanahalli/SideKick/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Your AI-powered study companion that transforms any YouTube video or web article into an interactive guided learning session — right from your browser's side panel.
