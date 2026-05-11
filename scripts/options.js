@@ -1,5 +1,9 @@
-// options.js - API Key Management
-
+/**
+ * Sidekick - AI-Powered Study Companion
+ * © 2026 Kaustubh Harapanahalli. All rights reserved.
+ * 
+ * options.js — Options Page Logic
+ */
 document.addEventListener('DOMContentLoaded', () => {
   const apiKeyInput = document.getElementById('apiKey');
   const saveBtn = document.getElementById('saveBtn');

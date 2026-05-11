@@ -1,5 +1,8 @@
 # 🚀 Sidekick
 
+[![CI](https://github.com/kaustubhharapanahalli/SideKick/actions/workflows/ci.yml/badge.svg)](https://github.com/kaustubhharapanahalli/SideKick/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Your AI-powered study companion that transforms any YouTube video or web article into an interactive guided learning session — right from your browser's side panel.
 
 ## ✨ Features

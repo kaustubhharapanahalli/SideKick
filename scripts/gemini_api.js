@@ -1,5 +1,9 @@
-// gemini_api.js - Core Wrapper for Gemini API
-
+/**
+ * Sidekick - AI-Powered Study Companion
+ * © 2026 Kaustubh Harapanahalli. All rights reserved.
+ * 
+ * gemini_api.js — Core API Client
+ */
 class GeminiClient {
   constructor(apiKey, model = 'gemini-2.5-flash') {
     this.apiKey = apiKey;

@@ -5,6 +5,12 @@
 // ================================================================
 // STATE
 // ================================================================
+/**
+ * Sidekick - AI-Powered Study Companion
+ * © 2026 Kaustubh Harapanahalli. All rights reserved.
+ * 
+ * sidepanel.js — Main UI Logic
+ */
 const state = {
   pageData: null,      // Raw data from content_bridge
   sections: [],        // [{title, summary, textPreview, startSeconds?, elementIndex?}]

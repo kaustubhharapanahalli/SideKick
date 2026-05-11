@@ -1,5 +1,9 @@
-// background.js — Sidekick Service Worker (Side Panel Architecture)
-
+/**
+ * Sidekick - AI-Powered Study Companion
+ * © 2026 Kaustubh Harapanahalli. All rights reserved.
+ * 
+ * background.js — Sidekick Service Worker
+ */
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setOptions({ enabled: true });
 });

@@ -1,7 +1,9 @@
-// content_bridge.js — Content script injected into the active tab
-// Detects page structure (YouTube chapters/transcript, article headings)
-// and relays data to the side panel via chrome.runtime messaging.
-
+/**
+ * Sidekick - AI-Powered Study Companion
+ * © 2026 Kaustubh Harapanahalli. All rights reserved.
+ * 
+ * content_bridge.js — DOM extraction and navigation
+ */
 (async function contentBridge() {
   'use strict';
 
