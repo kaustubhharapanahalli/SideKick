@@ -136,36 +136,58 @@
 
       if (!baseUrl) {
         // Fallback: try parsing ytInitialPlayerResponse from inline script tags.
-        // This works when the extension is re-used on a page that was never injected
-        // with the main-world helper, or when navigating via YouTube's SPA.
         const playerResponse = findPlayerResponse();
-        if (!playerResponse) return null;
-
-        const captions = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-        if (!captions || captions.length === 0) return null;
-
-        const track = captions.find(c => c.languageCode === 'en') || captions[0];
-        baseUrl = track?.baseUrl || null;
+        if (playerResponse) {
+          const captions = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+          if (captions && captions.length > 0) {
+            const track = captions.find(c => c.languageCode === 'en') || captions[0];
+            baseUrl = track?.baseUrl || null;
+          }
+        }
       }
 
-      if (!baseUrl) return null;
-
-      // Clear the stashed URL so a re-injection on the same page gets fresh data
-      delete document.documentElement.dataset.skCaptionUrl;
-
-      // Fetch caption data via the background proxy (bypasses CORS)
-      const response = await chrome.runtime.sendMessage({
-        type: 'FETCH_URL',
-        url: baseUrl + '&fmt=json3'
-      });
-
-      if (!response || !response.ok) {
-        return null;
+      // Clear the stashed attribute so a fresh injection always gets clean state
+      if (document.documentElement.dataset.skCaptionUrl) {
+        delete document.documentElement.dataset.skCaptionUrl;
       }
 
-      const data = JSON.parse(response.text);
+      if (baseUrl) {
+        // Avoid appending fmt=json3 if the URL already contains a fmt parameter
+        const fetchUrl = baseUrl.includes('fmt=') ? baseUrl : baseUrl + '&fmt=json3';
+        const response = await chrome.runtime.sendMessage({ type: 'FETCH_URL', url: fetchUrl });
+        if (response && response.ok) {
+          const events = parseJson3Transcript(response.text);
+          if (events && events.length > 0) return events;
+        }
+      }
+
+      // Strategy 3: Read directly from YouTube's transcript panel in the DOM.
+      // If the panel isn't open yet, programmatically click the "Show transcript"
+      // button so YouTube loads the data, then scrape the rendered segments.
+      // This is the most reliable path — it reads what YouTube itself rendered,
+      // with no CORS, no API keys, and no HTML parsing fragility.
+      const domTranscript = await extractTranscriptFromDOM();
+      if (domTranscript && domTranscript.length > 0) return domTranscript;
+
+      // Last-resort: ask the background service worker to use the InnerTube API
+      // or fetch the watch page directly.
+      const bgResult = await chrome.runtime.sendMessage({ type: 'GET_YOUTUBE_TRANSCRIPT', videoId });
+      if (bgResult && bgResult.ok) {
+        const events = parseJson3Transcript(bgResult.text);
+        if (events && events.length > 0) return events;
+      }
+
+      return null;
+
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function parseJson3Transcript(text) {
+    try {
+      const data = JSON.parse(text);
       if (!data.events) return null;
-
       return data.events
         .filter(e => e.segs && e.segs.length > 0)
         .map(e => ({
@@ -173,10 +195,72 @@
           text: e.segs.map(s => s.utf8 || '').join('').trim()
         }))
         .filter(e => e.text.length > 0);
-
-    } catch (e) {
+    } catch (_) {
       return null;
     }
+  }
+
+  /**
+   * Opens YouTube's transcript panel (if necessary) and reads segments directly
+   * from the rendered `ytd-transcript-segment-renderer` elements.
+   */
+  async function extractTranscriptFromDOM() {
+    // Check if segments are already rendered (transcript panel was already open)
+    let segments = scrapeTranscriptSegments();
+    if (segments) return segments;
+
+    // Find the "Show transcript" button and click it to trigger loading
+    const btn = findTranscriptButton();
+    if (!btn) return null;
+    btn.click();
+
+    // Poll for up to 5 seconds for the panel to populate
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 250));
+      segments = scrapeTranscriptSegments();
+      if (segments) return segments;
+    }
+
+    return null;
+  }
+
+  function findTranscriptButton() {
+    // Method 1: dedicated transcript section in the description area (most reliable)
+    const section = document.querySelector('ytd-video-description-transcript-section-renderer');
+    if (section) {
+      const btn = section.querySelector('#primary-button button, button');
+      if (btn) return btn;
+    }
+
+    // Method 2: any button/element whose label or text mentions "transcript"
+    const candidates = document.querySelectorAll(
+      'button, tp-yt-paper-button, yt-button-shape button'
+    );
+    for (const el of candidates) {
+      const label = (el.getAttribute('aria-label') || el.textContent || '').toLowerCase();
+      if (label.includes('transcript')) return el;
+    }
+
+    return null;
+  }
+
+  function scrapeTranscriptSegments() {
+    const segments = document.querySelectorAll('ytd-transcript-segment-renderer');
+    if (segments.length === 0) return null;
+
+    const result = [];
+    for (const seg of segments) {
+      const timeEl = seg.querySelector('.segment-timestamp');
+      const textEl = seg.querySelector('.segment-text, yt-formatted-string.segment-text, yt-formatted-string');
+      if (!timeEl || !textEl) continue;
+      const text = textEl.textContent.trim();
+      if (!text) continue;
+      result.push({
+        start: timestampToSeconds(timeEl.textContent.trim()),
+        text
+      });
+    }
+    return result.length > 0 ? result : null;
   }
 
   function findPlayerResponse() {
