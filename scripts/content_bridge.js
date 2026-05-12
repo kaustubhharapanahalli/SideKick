@@ -198,10 +198,24 @@
   function detectArticle() {
     const title = document.title;
 
-    // Identify the main content container
+    // Identify the main content container — ordered by specificity.
+    // Includes custom elements used by Distill (d-article), arXiv HTML (ltx_document),
+    // and other academic/blog CMS platforms.
     const mainContent = document.querySelector(
-      'article, main, [role="main"], .mw-parser-output, #mw-content-text, #content, .post-content, .entry-content, .article-body'
+      'd-article, article, main, [role="main"], .mw-parser-output, #mw-content-text,'
+      + ' .ltx_document, .paper-content, #content, .post-content, .entry-content, .article-body'
     ) || document.body;
+
+    // Helper: returns true for <li> elements that are pure navigation links.
+    // These appear in table-of-contents sidebars and should not be treated as
+    // article content (they cause the intro textPreview to include section titles
+    // from elsewhere in the article, misleading the question generator).
+    function isNavLink(el) {
+      if (el.tagName !== 'LI') return false;
+      const anchor = el.querySelector('a');
+      // The entire visible text of the <li> is just a hyperlink → it's a nav item
+      return anchor && anchor.textContent.trim() === el.textContent.trim();
+    }
 
     // Find ALL headings within the main content area only
     const allHeadings = Array.from(mainContent.querySelectorAll('h1, h2, h3'));
@@ -245,10 +259,10 @@
         // Node.DOCUMENT_POSITION_FOLLOWING means firstHeading comes AFTER el
         const pos = firstHeading.compareDocumentPosition(el);
         if (pos & Node.DOCUMENT_POSITION_FOLLOWING) {
-          // el is BEFORE firstHeading — check it isn't inside a nav/aside
-          if (!el.closest('nav, footer, aside, [role="navigation"]')) {
+          // el is BEFORE firstHeading — skip nav containers and pure-link list items
+          if (!el.closest('nav, footer, aside, [role="navigation"], d-contents') && !isNavLink(el)) {
             const t = el.textContent.trim();
-            if (t.length > 20) introText += t + '\n';
+            if (t.length > 30) introText += t + '\n';
           }
         }
       }
@@ -280,7 +294,7 @@
           if (!beforeNext) continue; // el is after nextHeading
         }
 
-        if (!el.closest('nav, footer, aside, [role="navigation"]')) {
+        if (!el.closest('nav, footer, aside, [role="navigation"], d-contents') && !isNavLink(el)) {
           const t = el.textContent.trim();
           if (t.length > 0) textContent += t + '\n';
         }
