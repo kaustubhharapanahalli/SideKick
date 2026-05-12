@@ -771,6 +771,44 @@ body {
   border-bottom-left-radius: 4px;
 }
 
+/* Markdown and LaTeX styling inside tutor messages */
+.chat-msg.tutor p {
+  margin: 0 0 8px 0;
+}
+.chat-msg.tutor p:last-child {
+  margin-bottom: 0;
+}
+.chat-msg.tutor code {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 12px;
+}
+.chat-msg.tutor pre {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 8px;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 0 0 8px 0;
+}
+.chat-msg.tutor pre code {
+  background: none;
+  padding: 0;
+}
+.chat-msg.tutor ul, .chat-msg.tutor ol {
+  margin: 0 0 8px 0;
+  padding-left: 20px;
+}
+.chat-msg.tutor ul:last-child, .chat-msg.tutor ol:last-child {
+  margin-bottom: 0;
+}
+.chat-msg.tutor .katex-display {
+  margin: 8px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
 .chat-input-row {
   display: flex;
   gap: 8px;

@@ -15,6 +15,7 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="sidepanel.css" />
+    <link rel="stylesheet" href="lib/katex.min.css" />
   </head>
   <body>
     <!-- Top Header -->
@@ -215,6 +216,11 @@
       </div>
     </div>
     <!-- /panelBody -->
+
+    <!-- Markdown + LaTeX rendering (bundled locally; no CDN / CSP issues) -->
+    <script src="lib/marked.umd.js"></script>
+    <script src="lib/katex.min.js"></script>
+    <script src="lib/katex-auto-render.min.js"></script>
 
     <script src="../scripts/gemini_api.js"></script>
     <script src="../scripts/sidepanel.js"></script>

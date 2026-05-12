@@ -10,7 +10,13 @@
     "lint": "node scripts/lint-check.js",
     "package": "node scripts/package.js"
   },
-  "keywords": ["chrome-extension", "sidekick", "gemini-ai", "education", "study-tutor"],
+  "keywords": [
+    "chrome-extension",
+    "sidekick",
+    "gemini-ai",
+    "education",
+    "study-tutor"
+  ],
   "author": "",
   "license": "MIT",
   "type": "commonjs",
@@ -18,12 +24,19 @@
     "@jest/globals": "^30.4.1",
     "jest": "^30.4.1",
     "jest-environment-jsdom": "^30.4.1",
-    "jsdom": "^29.1.1"
+    "jsdom": "^29.1.1",
+    "katex": "^0.16.45",
+    "marked": "^18.0.3"
   },
   "jest": {
     "testEnvironment": "jsdom",
-    "testMatch": ["**/tests/**/*.test.js"],
-    "moduleFileExtensions": ["js", "json"],
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
+    "moduleFileExtensions": [
+      "js",
+      "json"
+    ],
     "collectCoverageFrom": [
       "scripts/**/*.js",
       "!scripts/lint-check.js",

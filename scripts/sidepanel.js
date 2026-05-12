@@ -807,10 +807,18 @@ async function sendChatMessage() {
     // Stream done — wait for the typewriter to finish draining so the
     // chat history records exactly what the user read.
     await new Promise(resolve => {
-      if (pendingQueue.length === 0) { resolve(); return; }
+      if (pendingQueue.length === 0) { 
+        renderMarkdown(fullText, innerEl);
+        resolve(); 
+        return; 
+      }
       const origDrain = drainQueue;
       function drainAndResolve() {
-        if (pendingQueue.length === 0) { resolve(); return; }
+        if (pendingQueue.length === 0) { 
+          renderMarkdown(fullText, innerEl);
+          resolve(); 
+          return; 
+        }
         const batch = Math.min(4, pendingQueue.length);
         displayedText += pendingQueue.slice(0, batch);
         pendingQueue = pendingQueue.slice(batch);
@@ -839,9 +847,41 @@ function addChatMessage(role, text) {
 
   const msgEl = document.createElement('div');
   msgEl.className = `chat-msg ${role}`;
-  msgEl.textContent = text;
+  
+  if (role === 'tutor') {
+    renderMarkdown(text, msgEl);
+  } else {
+    msgEl.textContent = text;
+  }
+  
   els.chatMessages.appendChild(msgEl);
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+}
+
+function renderMarkdown(text, containerEl) {
+  // Parse Markdown
+  if (typeof marked !== 'undefined') {
+    containerEl.innerHTML = marked.parse(text, { breaks: true, gfm: true });
+  } else {
+    containerEl.textContent = text;
+  }
+
+  // Render LaTeX
+  if (typeof renderMathInElement !== 'undefined') {
+    try {
+      renderMathInElement(containerEl, {
+        delimiters: [
+          { left: '$$', right: '$$', display: true },
+          { left: '\\[', right: '\\]', display: true },
+          { left: '$', right: '$', display: false },
+          { left: '\\(', right: '\\)', display: false }
+        ],
+        throwOnError: false
+      });
+    } catch (e) {
+      console.warn('KaTeX rendering error:', e);
+    }
+  }
 }
 
 // ================================================================
