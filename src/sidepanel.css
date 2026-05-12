@@ -390,6 +390,72 @@ body {
 }
 
 /* ================================================================
+   COMPLETED SUMMARY BAR
+   (single compact row replacing section card + question area once done)
+   ================================================================ */
+.completed-summary-bar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 9px 16px;
+  margin-bottom: 12px;
+  min-height: 40px;
+  overflow: hidden;
+}
+
+.csb-check {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent-green);
+  flex-shrink: 0;
+}
+
+.csb-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.csb-sep {
+  color: var(--text-muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.csb-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.csb-badges {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.csb-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-green);
+  background: rgba(85, 107, 47, 0.08);
+  border: 1px solid rgba(85, 107, 47, 0.18);
+  border-radius: 20px;
+  padding: 2px 8px;
+  letter-spacing: 0.3px;
+}
+
+/* ================================================================
    CURRENT SECTION CARD
    ================================================================ */
 .current-section-card {
@@ -659,7 +725,7 @@ body {
   font-size: 14px;
   line-height: 1.5;
   resize: vertical;
-  min-height: 60px;
+  min-height: 100px;
   outline: none;
   transition: border-color 0.2s ease;
   margin-bottom: 12px;
@@ -678,10 +744,32 @@ body {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .answer-actions .btn-primary {
   flex: 1;
+}
+
+.question-counter {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 10px;
+  padding: 1px 7px;
+  margin-left: 2px;
+  letter-spacing: 0.5px;
+}
+
+.btn-success {
+  background: var(--accent-green);
+  color: #fff;
+  border: none;
+}
+
+.btn-success:hover {
+  background: #3d5023;
 }
 
 .validation-hint {
@@ -812,7 +900,7 @@ body {
 .chat-input-row {
   display: flex;
   gap: 8px;
-  align-items: center;
+  align-items: flex-end;
 }
 
 .chat-input {
@@ -826,6 +914,12 @@ body {
   font-size: 13px;
   outline: none;
   transition: border-color 0.2s ease;
+  resize: none;
+  overflow: hidden;
+  word-break: break-word;
+  line-height: 1.5;
+  min-height: 38px;
+  max-height: 120px;
 }
 
 .chat-input:focus {

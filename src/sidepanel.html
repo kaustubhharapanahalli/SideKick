@@ -85,6 +85,18 @@
           </div>
         </div>
 
+        <!-- Compact single-line bar shown once section Q&A is fully complete.
+             Replaces both the section card and question area to free space for discussion. -->
+        <div class="completed-summary-bar" id="completedSummaryBar" style="display:none">
+          <span class="csb-check">✓</span>
+          <span class="csb-section-label" id="completedSummaryLabel">SECTION 1</span>
+          <span class="csb-sep">·</span>
+          <span class="csb-title" id="completedSummaryTitle"></span>
+          <span class="csb-badges">
+            <span class="csb-badge">Reviewed &amp; Answered</span>
+          </span>
+        </div>
+
         <!-- Current Section Card -->
         <div class="current-section-card" id="currentSectionCard">
           <div class="section-card-header" id="sectionCardHeader">
@@ -136,6 +148,7 @@
         <div class="question-area" id="questionArea" style="display: none">
           <div class="question-area-header" id="questionAreaHeader">
             <span class="question-label">QUESTION</span>
+            <span class="question-counter" id="questionCounter" style="display:none"></span>
             <span class="question-answered-badge" id="questionAnsweredBadge" style="display:none">✓ Answered</span>
             <span class="question-chevron" id="questionChevron">▾</span>
           </div>
@@ -156,6 +169,13 @@
               >
                 Reveal Answer
               </button>
+              <button
+                class="btn btn-success"
+                id="gotItBtn"
+                style="display: none"
+              >
+                Got it ✓
+              </button>
             </div>
             <div
               class="validation-hint"
@@ -174,12 +194,12 @@
             <!-- Messages populated by JS -->
           </div>
           <div class="chat-input-row">
-            <input
-              type="text"
+            <textarea
               class="chat-input"
               id="chatInput"
               placeholder="Ask a follow-up question..."
-            />
+              rows="1"
+            ></textarea>
             <button class="btn btn-icon" id="chatSendBtn">
               <svg
                 width="18"

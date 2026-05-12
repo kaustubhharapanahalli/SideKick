@@ -128,18 +128,32 @@
 
   async function extractTranscript(videoId) {
     try {
-      // Try to get captions from ytInitialPlayerResponse
-      const playerResponse = findPlayerResponse();
-      if (!playerResponse) return null;
+      // Primary: use the caption URL pre-extracted by the main-world helper injected by
+      // sidepanel.js. Content scripts run in an isolated world and cannot access
+      // window.ytInitialPlayerResponse directly; the helper stores the URL in a DOM
+      // data attribute so we can read it here without needing JS-world access.
+      let baseUrl = document.documentElement.dataset.skCaptionUrl || null;
 
-      const captions = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-      if (!captions || captions.length === 0) return null;
+      if (!baseUrl) {
+        // Fallback: try parsing ytInitialPlayerResponse from inline script tags.
+        // This works when the extension is re-used on a page that was never injected
+        // with the main-world helper, or when navigating via YouTube's SPA.
+        const playerResponse = findPlayerResponse();
+        if (!playerResponse) return null;
 
-      // Prefer English
-      const track = captions.find(c => c.languageCode === 'en') || captions[0];
-      const baseUrl = track.baseUrl;
+        const captions = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+        if (!captions || captions.length === 0) return null;
 
-      // Fetch via background (bypass CORS)
+        const track = captions.find(c => c.languageCode === 'en') || captions[0];
+        baseUrl = track?.baseUrl || null;
+      }
+
+      if (!baseUrl) return null;
+
+      // Clear the stashed URL so a re-injection on the same page gets fresh data
+      delete document.documentElement.dataset.skCaptionUrl;
+
+      // Fetch caption data via the background proxy (bypasses CORS)
       const response = await chrome.runtime.sendMessage({
         type: 'FETCH_URL',
         url: baseUrl + '&fmt=json3'

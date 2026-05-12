@@ -22,7 +22,10 @@ const state = {
   sectionCompleted: new Set(), // Indices of sections that have been fully completed (Q&A done)
   currentQuestion: null,
   currentAnswer: null,
-  questionCache: new Map() // index → Promise<{skip, question, idealAnswer}>
+  currentQuestions: [],    // [{question, idealAnswer}] for current section (may be multiple)
+  currentQuestionIdx: 0,   // Which question in currentQuestions we're on
+  globalAnalysis: null,    // Promise<{sectionQuestions:[{index,questions:[{question,idealAnswer}]}]}> | null
+  questionCache: new Map() // index → Promise<{skip, questions:[{question, idealAnswer}]}>
 };
 
 // ================================================================
@@ -67,6 +70,8 @@ const els = {
   answerInput:          document.getElementById('answerInput'),
   submitAnswerBtn:      document.getElementById('submitAnswerBtn'),
   revealAnswerBtn:      document.getElementById('revealAnswerBtn'),
+  gotItBtn:             document.getElementById('gotItBtn'),
+  questionCounter:      document.getElementById('questionCounter'),
   validationHint:       document.getElementById('validationHint'),
   // Chat
   chatArea:         document.getElementById('chatArea'),
@@ -75,8 +80,26 @@ const els = {
   chatSendBtn:      document.getElementById('chatSendBtn'),
   // Next / Complete
   nextSectionBtn:   document.getElementById('nextSectionBtn'),
-  restartBtn:       document.getElementById('restartBtn')
+  restartBtn:       document.getElementById('restartBtn'),
+  // Completed summary bar (replaces section card + question area once done)
+  currentSectionCard:     document.getElementById('currentSectionCard'),
+  completedSummaryBar:    document.getElementById('completedSummaryBar'),
+  completedSummaryLabel:  document.getElementById('completedSummaryLabel'),
+  completedSummaryTitle:  document.getElementById('completedSummaryTitle')
 };
+
+// ================================================================
+// AUTO-RESIZE TEXTAREAS
+// ================================================================
+els.answerInput.addEventListener('input', () => {
+  els.answerInput.style.height = 'auto';
+  els.answerInput.style.height = els.answerInput.scrollHeight + 'px';
+});
+
+els.chatInput.addEventListener('input', () => {
+  els.chatInput.style.height = 'auto';
+  els.chatInput.style.height = els.chatInput.scrollHeight + 'px';
+});
 
 // ================================================================
 // INITIALIZATION
@@ -121,6 +144,28 @@ async function startDetection() {
       showError('Cannot analyze this page. Navigate to a YouTube video or article.');
       return;
     }
+
+    // Inject a tiny main-world helper BEFORE the content bridge.
+    // Content scripts run in an isolated world and cannot read window.ytInitialPlayerResponse
+    // (a JavaScript variable set by YouTube's own page scripts). By running in the MAIN world
+    // we can access it and stash the caption URL as a DOM data attribute, which the
+    // isolated-world content bridge can then read safely via the DOM.
+    await chrome.scripting.executeScript({
+      target: { tabId: state.tabId },
+      world: 'MAIN',
+      func: () => {
+        try {
+          const resp = window.ytInitialPlayerResponse;
+          if (!resp?.captions?.playerCaptionsTracklistRenderer?.captionTracks?.length) return;
+          const tracks = resp.captions.playerCaptionsTracklistRenderer.captionTracks;
+          // Prefer English; fall back to the first available track
+          const track = tracks.find(c => c.languageCode === 'en') || tracks[0];
+          if (track?.baseUrl) {
+            document.documentElement.dataset.skCaptionUrl = track.baseUrl;
+          }
+        } catch (e) { /* non-YouTube page or player not yet initialised — safe to ignore */ }
+      }
+    }).catch(() => { /* ignore — non-YouTube pages don't need this */ });
 
     // Inject the content bridge
     await chrome.scripting.executeScript({
@@ -213,6 +258,11 @@ async function processSections() {
   els.loaderText.textContent = 'Generating section summaries...';
   await geminiGenerateSummaries();
 
+  // Kick off global deep analysis in background (does NOT block the UI).
+  // Uses a stronger model to analyse all sections at once and pre-generate
+  // multiple questions per section where content depth warrants it.
+  state.globalAnalysis = buildGlobalContext();
+
   // Show the sections UI
   showState('sections');
 
@@ -222,10 +272,10 @@ async function processSections() {
 
   updateUI();
 
-  // Kick off prefetch for section 0 immediately in the background.
-  // The user is now reading — by the time they click Mark as Reviewed
-  // the question will almost certainly be ready.
-  prefetchQuestion(0);
+  // Navigate to section 0: seeks the video to the start timestamp and installs
+  // the timeupdate autopause listener at the section boundary. Also kicks off
+  // prefetch for sections 0 and 1 in the background.
+  navigateToSection(0);
 }
 
 async function geminiSegmentTranscript(transcript) {
@@ -375,12 +425,18 @@ function updateUI() {
 
   // Reset action area
   if (state.sectionCompleted.has(state.currentIndex)) {
-    // Already completed — show chat, hide mark/question
-    els.markReviewedBtn.style.display = 'none';
+    // Already completed — swap section card + question area for the compact bar
+    els.currentSectionCard.style.display = 'none';
     els.questionArea.style.display = 'none';
+    els.completedSummaryBar.style.display = 'flex';
+    els.completedSummaryLabel.textContent = `SECTION ${state.currentIndex + 1}`;
+    els.completedSummaryTitle.textContent = current.title;
+    els.markReviewedBtn.style.display = 'none';
     els.chatArea.style.display = 'block';
     els.nextSectionBtn.style.display = state.currentIndex < total - 1 ? 'flex' : 'none';
   } else {
+    els.currentSectionCard.style.display = '';
+    els.completedSummaryBar.style.display = 'none';
     els.markReviewedBtn.style.display = 'flex';
     els.questionArea.style.display = 'none';
     els.chatArea.style.display = 'none';
@@ -389,13 +445,21 @@ function updateUI() {
 
   // Reset fields
   els.answerInput.value = '';
+  els.answerInput.style.height = '';
   els.validationHint.style.display = 'none';
   els.revealAnswerBtn.style.display = 'none';
+  els.gotItBtn.style.display = 'none';
   els.submitAnswerBtn.style.display = '';
   els.submitAnswerBtn.disabled = false;
+  els.questionCounter.style.display = 'none';
+  els.questionCounter.textContent = '';
   state.failedAttempts = 0;
+  state.currentQuestions = [];
+  state.currentQuestionIdx = 0;
   state.chatHistory = [];
   els.chatMessages.innerHTML = '';
+  // Reset chat input height for textarea
+  els.chatInput.style.height = '';
 
   // Re-enable chat input for the new section (may have been locked by follow-up limit)
   els.chatInput.disabled = false;
@@ -478,6 +542,70 @@ function navigateToSection(index) {
 }
 
 // ================================================================
+// GLOBAL DEEP ANALYSIS (strong model, runs in parallel)
+// ================================================================
+
+/**
+ * Uses a stronger model to analyse the full content and pre-generate
+ * 1–3 questions per section based on content depth and complexity.
+ * Runs in background — failure is fully silent; prefetchQuestion falls back
+ * to the small model if this promise rejects or returns null.
+ */
+async function buildGlobalContext() {
+  if (!state.apiKey || state.sections.length === 0) return null;
+
+  try {
+    const LARGE_MODEL = 'gemini-2.5-flash';
+    const client = new GeminiClient(state.apiKey, LARGE_MODEL);
+
+    // Assemble full content with labelled section boundaries
+    const fullContent = state.sections.map((s, i) =>
+      `--- Section ${i}: "${s.title}" ---\n${s.textPreview || ''}`.trim()
+    ).join('\n\n');
+
+    const systemInstruction = `You are an expert educational analyst. Analyse the full learning content provided and for each section generate between 1 and 3 targeted comprehension questions, proportional to the section's depth and complexity. Shallow sections get 1 question; rich sections get up to 3. Focus ONLY on ideas explicitly stated in each section. Each question must be directly answerable from that section's text alone.`;
+
+    const prompt = `Analyse the following content and generate questions for each section:\n\n${fullContent.substring(0, 30000)}`;
+
+    const responseSchema = {
+      type: 'OBJECT',
+      properties: {
+        sectionQuestions: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: {
+              index: { type: 'NUMBER' },
+              questions: {
+                type: 'ARRAY',
+                items: {
+                  type: 'OBJECT',
+                  properties: {
+                    question: { type: 'STRING' },
+                    idealAnswer: { type: 'STRING' }
+                  },
+                  required: ['question', 'idealAnswer']
+                }
+              }
+            },
+            required: ['index', 'questions']
+          }
+        }
+      },
+      required: ['sectionQuestions']
+    };
+
+    const result = await client.generateContent(prompt, systemInstruction, responseSchema);
+    if (result && Array.isArray(result.sectionQuestions) && result.sectionQuestions.length > 0) {
+      return result;
+    }
+    return null;
+  } catch (_) {
+    return null; // silent — small model fallback always available
+  }
+}
+
+// ================================================================
 // ASYNC QUESTION PRE-FETCHING
 // ================================================================
 
@@ -487,12 +615,14 @@ function navigateToSection(index) {
  * can await it instantly if the request already completed.
  * Calling this multiple times for the same index is safe — the cached
  * Promise is returned immediately on subsequent calls.
+ *
+ * Returns: Promise<{skip: bool, questions: [{question, idealAnswer}]}>
  */
 function prefetchQuestion(index) {
   if (state.questionCache.has(index)) return state.questionCache.get(index);
 
   const section = state.sections[index];
-  if (!section || !state.apiKey) return;
+  if (!section || !state.apiKey) return Promise.resolve({ skip: true, questions: [] });
 
   const contentText = section.textPreview
     ? section.textPreview.substring(0, 3000)
@@ -502,16 +632,31 @@ function prefetchQuestion(index) {
     section.summary ? `Section Summary: ${section.summary}` : ''
   ].filter(Boolean).join('\n\n');
 
-  // Gate: if there is no meaningful content, skip Q&A entirely.
-  // We decide this in code rather than asking Gemini, which tends to be
-  // overly conservative when classifying content as "not enough".
   const hasContent = context.trim().length > 150;
 
   const promise = (async () => {
     if (!hasContent) {
-      return { skip: true };
+      return { skip: true, questions: [] };
     }
 
+    // Try to get questions from the global deep-analysis first (race with 200 ms timeout).
+    // If the strong model already finished (or finishes quickly), we use its richer
+    // multi-question set. Otherwise we fall back to the small model for 1 question.
+    try {
+      const globalResult = await Promise.race([
+        state.globalAnalysis || Promise.resolve(null),
+        new Promise(r => setTimeout(() => r(null), 200))
+      ]);
+
+      if (globalResult && Array.isArray(globalResult.sectionQuestions)) {
+        const entry = globalResult.sectionQuestions.find(e => e.index === index);
+        if (entry && Array.isArray(entry.questions) && entry.questions.length > 0) {
+          return { skip: false, questions: entry.questions };
+        }
+      }
+    } catch (_) { /* ignore — fall through to small model */ }
+
+    // Small-model fallback: generate one question
     try {
       const client = new GeminiClient(state.apiKey);
 
@@ -529,13 +674,14 @@ function prefetchQuestion(index) {
       };
 
       const result = await client.generateContent(prompt, systemInstruction, responseSchema);
-      return { skip: false, question: result.question, idealAnswer: result.idealAnswer };
+      return { skip: false, questions: [{ question: result.question, idealAnswer: result.idealAnswer }] };
     } catch (_) {
-      // Graceful fallback — always resolves so markReviewedBtn never hangs
       return {
         skip: false,
-        question: `What is the main concept covered in the "${section.title}" section?`,
-        idealAnswer: section.summary || 'Review the key concepts from this section.'
+        questions: [{
+          question: `What is the main concept covered in the "${section.title}" section?`,
+          idealAnswer: section.summary || 'Review the key concepts from this section.'
+        }]
       };
     }
   })();
@@ -573,7 +719,7 @@ els.markReviewedBtn.addEventListener('click', async () => {
     els.questionText.textContent = 'Just a moment...';
   }
 
-  // Await the real result (instant if already resolved)
+  // Await the cached prefetch result (instant if already resolved)
   const result = await questionPromise;
 
   if (result.skip) {
@@ -583,10 +729,38 @@ els.markReviewedBtn.addEventListener('click', async () => {
     return;
   }
 
-  state.currentQuestion = result.question;
-  state.currentAnswer = result.idealAnswer;
-  els.questionText.textContent = result.question;
+  // Give the global deep-analysis one last chance. The prefetch raced it against
+  // only 200 ms (too short for gemini-2.5-flash). By the time the user clicks
+  // "Mark as Reviewed" they've been reading for several seconds, so globalAnalysis
+  // is very likely already resolved — the race below resolves in the same
+  // microtask if so, with no perceptible delay.
+  let resolvedQuestions = result.questions;
+  try {
+    const globalResult = await Promise.race([
+      state.globalAnalysis || Promise.resolve(null),
+      new Promise(r => setTimeout(() => r(null), 500))
+    ]);
+    if (globalResult && Array.isArray(globalResult.sectionQuestions)) {
+      const entry = globalResult.sectionQuestions.find(e => e.index === idx);
+      if (entry && Array.isArray(entry.questions) && entry.questions.length > 0) {
+        resolvedQuestions = entry.questions;
+      }
+    }
+  } catch (_) { /* keep small-model fallback */ }
+
+  // Load questions for this section
+  state.currentQuestions = resolvedQuestions;
+  state.currentQuestionIdx = 0;
+  state.currentQuestion = state.currentQuestions[0].question;
+  state.currentAnswer = state.currentQuestions[0].idealAnswer;
+  els.questionText.textContent = state.currentQuestion;
   els.submitAnswerBtn.disabled = false;
+
+  // Show question counter if there are multiple questions
+  if (state.currentQuestions.length > 1) {
+    els.questionCounter.textContent = `1 / ${state.currentQuestions.length}`;
+    els.questionCounter.style.display = 'inline-block';
+  }
 
   // Pre-fetch next section's question now (user is about to start answering this one)
   if (idx + 1 < state.sections.length) {
@@ -627,7 +801,10 @@ els.submitAnswerBtn.addEventListener('click', async () => {
     if (result.isCorrect) {
       els.validationHint.className = 'validation-hint success';
       els.validationHint.textContent = result.feedback;
-      onSectionCompleted();
+      // Show the "Got it" button so the user can review the feedback before collapsing
+      els.gotItBtn.style.display = '';
+      els.submitAnswerBtn.style.display = 'none';
+      els.revealAnswerBtn.style.display = 'none';
     } else {
       state.failedAttempts++;
       els.validationHint.className = 'validation-hint error';
@@ -648,22 +825,54 @@ els.submitAnswerBtn.addEventListener('click', async () => {
 
 // Reveal answer
 els.revealAnswerBtn.addEventListener('click', () => {
+  els.validationHint.style.display = 'block';
   els.validationHint.className = 'validation-hint info';
   els.validationHint.innerHTML = `<strong>Answer:</strong> ${state.currentAnswer}`;
   els.revealAnswerBtn.style.display = 'none';
   els.submitAnswerBtn.style.display = 'none';
-  onSectionCompleted();
+  // Show the "Got it" button so user reviews the revealed answer before moving on
+  els.gotItBtn.style.display = '';
+});
+
+// "Got it ✓" — user has reviewed feedback/revealed answer.
+// Advances to the next question in the section, or completes the section.
+els.gotItBtn.addEventListener('click', () => {
+  state.currentQuestionIdx++;
+
+  if (state.currentQuestionIdx < state.currentQuestions.length) {
+    // Load next question
+    const next = state.currentQuestions[state.currentQuestionIdx];
+    state.currentQuestion = next.question;
+    state.currentAnswer = next.idealAnswer;
+
+    // Reset form for next question
+    els.questionText.textContent = state.currentQuestion;
+    els.answerInput.value = '';
+    els.answerInput.style.height = '';
+    els.validationHint.style.display = 'none';
+    els.gotItBtn.style.display = 'none';
+    els.revealAnswerBtn.style.display = 'none';
+    els.submitAnswerBtn.style.display = '';
+    els.submitAnswerBtn.disabled = false;
+    state.failedAttempts = 0;
+
+    // Update counter
+    els.questionCounter.textContent = `${state.currentQuestionIdx + 1} / ${state.currentQuestions.length}`;
+  } else {
+    // All questions answered — collapse and open discussion
+    onSectionCompleted();
+  }
 });
 
 function onSectionCompleted() {
   state.sectionCompleted.add(state.currentIndex);
 
-  // Collapse the question area and show the answered badge
-  if (els.questionBody) {
-    els.questionBody.classList.add('collapsed');
-    els.questionChevron.classList.add('collapsed');
-    els.questionAnsweredBadge.style.display = 'inline-flex';
-  }
+  // Swap section card + question area for the compact summary bar
+  els.currentSectionCard.style.display = 'none';
+  els.questionArea.style.display = 'none';
+  els.completedSummaryLabel.textContent = `SECTION ${state.currentIndex + 1}`;
+  els.completedSummaryTitle.textContent = state.sections[state.currentIndex].title;
+  els.completedSummaryBar.style.display = 'flex';
 
   // Show chat area + next button
   els.chatArea.style.display = 'block';
@@ -671,6 +880,11 @@ function onSectionCompleted() {
 
   // Add initial tutor message to chat
   addChatMessage('tutor', 'Great work on this section! Feel free to ask any follow-up questions about what you just learned.');
+
+  // Scroll discussion into view so it's immediately readable
+  setTimeout(() => {
+    els.chatArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 150);
 
   // If it was the last section, show completion
   if (state.currentIndex === state.sections.length - 1 && state.sectionCompleted.size === state.sections.length) {
@@ -714,6 +928,7 @@ async function sendChatMessage() {
   if (!text) return;
 
   els.chatInput.value = '';
+  els.chatInput.style.height = '';
 
   // Count how many follow-up questions the user has already asked in this section.
   // chatHistory includes the tutor's opening message, so filter to user-only entries.
@@ -759,7 +974,11 @@ async function sendChatMessage() {
       .map(m => `${m.role === 'user' ? 'Student' : 'Tutor'}: ${m.text}`)
       .join('\n');
 
-    const systemInstruction = `You are a friendly, expert tutor. The student is learning about "${current.title}". Answer their question clearly and concisely. After answering, optionally ask a short follow-up question to deepen understanding. Keep responses under 150 words.`;
+    const systemInstruction = `You are a friendly, expert tutor. The student is learning about "${current.title}". Answer their question clearly and concisely. After answering, optionally ask a short follow-up question to deepen understanding. Keep responses under 150 words.${
+      state.sections.length > state.currentIndex + 1
+        ? ` IMPORTANT: Do NOT explain content from upcoming sections. Future sections cover: ${state.sections.slice(state.currentIndex + 1).map(s => `"${s.title}"`).join(', ')}. If the student asks about those topics, respond: "You'll explore that ahead! For now, let me help you go deeper on this section." Then ask a follow-up question specific to the current section.`
+        : ''
+    }`;
 
     const sectionContext = current.textPreview
       ? `Section content: ${current.textPreview.substring(0, 1500)}\n\n`
