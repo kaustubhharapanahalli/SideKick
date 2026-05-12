@@ -36,9 +36,9 @@ describe('GeminiClient', () => {
   });
 
   describe('constructor', () => {
-    test('sets default model to gemini-2.5-flash', () => {
+    test('sets default model to gemini-3.1-flash-lite', () => {
       const client = new GeminiClient('test-key');
-      expect(client.model).toBe('gemini-2.5-flash');
+      expect(client.model).toBe('gemini-3.1-flash-lite');
       expect(client.isGemma).toBe(false);
     });
 

@@ -22,7 +22,8 @@ const state = {
   sectionCompleted: new Set(), // Indices of sections that have been fully completed (Q&A done)
   currentQuestion: null,
   currentAnswer: null,
-  questionCache: new Map() // index → Promise<{hasEnoughContent, question, idealAnswer}>
+  questionCache: new Map(), // index → Promise<{skip, question, idealAnswer}>
+  chapPauseTimer: null      // setTimeout handle for auto-pausing at chapter end
 };
 
 // ================================================================
@@ -428,11 +429,26 @@ function renderSectionList() {
 function navigateToSection(index) {
   const section = state.sections[index];
 
+  // Clear any pending chapter-end pause from the previous section
+  if (state.chapPauseTimer) {
+    clearTimeout(state.chapPauseTimer);
+    state.chapPauseTimer = null;
+  }
+
   if (state.pageData.type === 'youtube' && section.startSeconds != null) {
-    // Seek YouTube video
     sendToTab('SEEK_VIDEO', { seconds: section.startSeconds });
+
+    // Schedule an auto-pause when the chapter window ends
+    if (section.endSeconds != null) {
+      const durationMs = (section.endSeconds - section.startSeconds) * 1000;
+      if (durationMs > 0) {
+        state.chapPauseTimer = setTimeout(() => {
+          sendToTab('PAUSE_VIDEO', {});
+          state.chapPauseTimer = null;
+        }, durationMs);
+      }
+    }
   } else if (section.elementIndex != null && section.elementIndex >= 0) {
-    // Scroll to article heading
     sendToTab('SCROLL_TO_HEADING', { elementIndex: section.elementIndex });
   }
 
@@ -664,18 +680,17 @@ async function sendChatMessage() {
   els.chatInput.value = '';
   addChatMessage('user', text);
 
-  // Show typing indicator
-  const typingEl = document.createElement('div');
-  typingEl.className = 'chat-msg tutor typing-dots';
-  typingEl.innerHTML = '<span></span><span></span><span></span>';
-  els.chatMessages.appendChild(typingEl);
+  // Create the tutor message bubble that will be streamed into
+  const msgEl = document.createElement('div');
+  msgEl.className = 'chat-msg tutor';
+  msgEl.innerHTML = '<span class="chat-msg-inner typing-dots"><span></span><span></span><span></span></span>';
+  els.chatMessages.appendChild(msgEl);
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
 
   try {
     const client = new GeminiClient(state.apiKey);
     const current = state.sections[state.currentIndex];
 
-    // Build conversation context
     const chatContext = state.chatHistory
       .map(m => `${m.role === 'user' ? 'Student' : 'Tutor'}: ${m.text}`)
       .join('\n');
@@ -688,16 +703,25 @@ async function sendChatMessage() {
 
     const prompt = `${sectionContext}Previous conversation:\n${chatContext}\n\nStudent asks: ${text}`;
 
-    const response = await client.generateContent(prompt, systemInstruction);
+    const innerEl = msgEl.querySelector('.chat-msg-inner') || msgEl;
+    innerEl.innerHTML = ''; // clear typing dots
+    let fullText = '';
 
-    // Remove typing indicator
-    typingEl.remove();
+    await client.streamContent(prompt, systemInstruction, (chunk) => {
+      fullText += chunk;
+      innerEl.textContent = fullText;
+      els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+    });
 
-    addChatMessage('tutor', response);
+    // Update chat history with the full response
+    state.chatHistory.push({ role: 'user', text });
+    state.chatHistory.push({ role: 'tutor', text: fullText });
 
   } catch (e) {
-    typingEl.remove();
-    addChatMessage('tutor', 'Sorry, I had trouble responding. Please try again.');
+    const innerEl = msgEl.querySelector('.chat-msg-inner') || msgEl;
+    innerEl.textContent = 'Sorry, I had trouble responding. Please try again.';
+    state.chatHistory.push({ role: 'user', text });
+    state.chatHistory.push({ role: 'tutor', text: 'Sorry, I had trouble responding. Please try again.' });
   }
 }
 

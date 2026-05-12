@@ -49,7 +49,9 @@
   function extractChaptersFromDOM() {
     const chapters = [];
 
-    // Method 1: Macro markers (chapter list in description)
+    // Method 1: Macro markers rendered in the chapter panel / description
+    // NOTE: YouTube renders this element multiple times in different UI contexts
+    // (chapter popup, seek bar, sidebar panel). Collect all, deduplicate at the end.
     const markers = document.querySelectorAll('ytd-macro-markers-list-item-renderer');
     markers.forEach(marker => {
       const titleEl = marker.querySelector('#details h4, #details .macro-markers');
@@ -63,36 +65,36 @@
       }
     });
 
-    if (chapters.length > 0) return chapters;
-
-    // Method 2: Structured chapter data from ytInitialData
-    try {
-      const scripts = document.querySelectorAll('script');
-      for (const script of scripts) {
-        if (script.textContent.includes('macroMarkersListItemRenderer')) {
-          const match = script.textContent.match(/var ytInitialData\s*=\s*(\{.*?\});/s);
-          if (match) {
-            const data = JSON.parse(match[1]);
-            const markers = findDeep(data, 'macroMarkersListItemRenderer');
-            markers.forEach(m => {
-              const title = m.title?.simpleText || m.title?.runs?.[0]?.text || '';
-              const timeText = m.timeDescription?.simpleText || '';
-              if (title && timeText) {
-                chapters.push({
-                  title,
-                  timestamp: timeText,
-                  seconds: timestampToSeconds(timeText)
-                });
-              }
-            });
+    // Method 2: Structured chapter data from ytInitialData (fallback)
+    if (chapters.length === 0) {
+      try {
+        const scripts = document.querySelectorAll('script');
+        for (const script of scripts) {
+          if (script.textContent.includes('macroMarkersListItemRenderer')) {
+            const match = script.textContent.match(/var ytInitialData\s*=\s*(\{.*?\});/s);
+            if (match) {
+              const data = JSON.parse(match[1]);
+              const markers = findDeep(data, 'macroMarkersListItemRenderer');
+              markers.forEach(m => {
+                const title = m.title?.simpleText || m.title?.runs?.[0]?.text || '';
+                const timeText = m.timeDescription?.simpleText || '';
+                if (title && timeText) {
+                  chapters.push({
+                    title,
+                    timestamp: timeText,
+                    seconds: timestampToSeconds(timeText)
+                  });
+                }
+              });
+            }
+            break;
           }
-          break;
         }
-      }
-    } catch (e) { /* Chapter data unavailable */ }
+      } catch (e) { /* Chapter data unavailable */ }
+    }
 
-    // Deduplicate by seconds — findDeep may surface the same chapter
-    // from multiple branches of ytInitialData (player bar, sidebar, etc.)
+    // Deduplicate by seconds — both methods may yield duplicates from
+    // repeated UI renders of the same chapter data.
     const seen = new Set();
     return chapters.filter(ch => {
       if (seen.has(ch.seconds)) return false;
@@ -206,12 +208,27 @@
 
     // Filter to content headings (not nav, footer, sidebar, or the page title H1)
     const pageTitle = title.split(' - ')[0].trim();
+
+    // Headings that are structural metadata rather than content sections
+    const METADATA_HEADINGS = new Set([
+      'authors', 'author', 'affiliations', 'affiliation', 'abstract',
+      'keywords', 'references', 'bibliography', 'acknowledgements',
+      'acknowledgments', 'funding', 'disclosure', 'conflicts of interest',
+      'conflict of interest', 'doi', 'published', 'publication date',
+      'citation', 'citations', 'footnotes', 'appendix', 'supplementary',
+      'supplemental', 'about the author', 'about the authors', 'contact',
+      'correspondence', 'related articles', 'related posts', 'see also',
+      'tags', 'categories', 'share', 'comments'
+    ]);
+
     const contentHeadings = allHeadings.filter(h => {
       const parent = h.closest('nav, footer, aside, header, [role="navigation"], [role="banner"]');
       if (parent) return false;
       if (h.textContent.trim().length < 2) return false;
       // Skip the main article H1 (used as the panel title, not a section)
       if (h.tagName === 'H1' && h.textContent.trim() === pageTitle) return false;
+      // Skip metadata headings common in academic papers and articles
+      if (METADATA_HEADINGS.has(h.textContent.trim().toLowerCase())) return false;
       return true;
     });
 
@@ -345,6 +362,12 @@
         video.currentTime = message.seconds;
         video.play();
       }
+      sendResponse({ ok: true });
+    }
+
+    if (message.type === 'PAUSE_VIDEO') {
+      const video = document.querySelector('video');
+      if (video) video.pause();
       sendResponse({ ok: true });
     }
 

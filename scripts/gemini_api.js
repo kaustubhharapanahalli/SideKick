@@ -159,6 +159,65 @@ class GeminiClient {
         return null;
     }
   }
+  /**
+   * Stream a text-only response, calling onChunk(text) for each incremental delta.
+   * Uses the streamGenerateContent SSE endpoint.
+   * Falls back to generateContent if streaming is unsupported.
+   */
+  async streamContent(prompt, systemInstruction = null, onChunk) {
+    if (!this.apiKey) throw new Error('Gemini API Key is missing.');
+
+    const streamUrl = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:streamGenerateContent?alt=sse&key=${this.apiKey}`;
+
+    const payload = {
+      contents: [{ role: 'user', parts: [{ text: prompt }] }]
+    };
+
+    if (!this.isGemma && systemInstruction) {
+      payload.systemInstruction = {
+        role: 'system',
+        parts: [{ text: systemInstruction }]
+      };
+    }
+
+    const response = await fetch(streamUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      // Fall back to non-streaming on error
+      const text = await this.generateContent(prompt, systemInstruction);
+      onChunk(text);
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep any incomplete line
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const jsonStr = line.slice(6).trim();
+        if (jsonStr === '[DONE]') continue;
+        try {
+          const data = JSON.parse(jsonStr);
+          const chunk = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (chunk) onChunk(chunk);
+        } catch (_) { /* malformed SSE chunk — skip */ }
+      }
+    }
+  }
+
 }
 
 // Expose globally for sidepanel.js
