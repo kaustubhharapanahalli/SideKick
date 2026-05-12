@@ -22,8 +22,7 @@ const state = {
   sectionCompleted: new Set(), // Indices of sections that have been fully completed (Q&A done)
   currentQuestion: null,
   currentAnswer: null,
-  questionCache: new Map(), // index → Promise<{skip, question, idealAnswer}>
-  chapPauseTimer: null      // setTimeout handle for auto-pausing at chapter end
+  questionCache: new Map() // index → Promise<{skip, question, idealAnswer}>
 };
 
 // ================================================================
@@ -46,21 +45,29 @@ const els = {
   retryBtn:         document.getElementById('retryBtn'),
   // Sections
   sectionListToggle: document.getElementById('sectionListToggle'),
-  sectionList:      document.getElementById('sectionList'),
-  sectionCount:     document.getElementById('sectionCount'),
-  sectionLabel:     document.getElementById('sectionLabel'),
-  sectionTitle:     document.getElementById('sectionTitle'),
-  sectionSummary:   document.getElementById('sectionSummary'),
-  timestampHint:    document.getElementById('timestampHint'),
-  timestampText:    document.getElementById('timestampText'),
-  markReviewedBtn:  document.getElementById('markReviewedBtn'),
+  sectionList:       document.getElementById('sectionList'),
+  sectionCount:      document.getElementById('sectionCount'),
+  sectionLabel:      document.getElementById('sectionLabel'),
+  sectionCardHeader: document.getElementById('sectionCardHeader'),
+  sectionCardBody:   document.getElementById('sectionCardBody'),
+  sectionCardChevron:document.getElementById('sectionCardChevron'),
+  sectionReviewedBadge: document.getElementById('sectionReviewedBadge'),
+  sectionTitle:      document.getElementById('sectionTitle'),
+  sectionSummary:    document.getElementById('sectionSummary'),
+  timestampHint:     document.getElementById('timestampHint'),
+  timestampText:     document.getElementById('timestampText'),
+  markReviewedBtn:   document.getElementById('markReviewedBtn'),
   // Question
-  questionArea:     document.getElementById('questionArea'),
-  questionText:     document.getElementById('questionText'),
-  answerInput:      document.getElementById('answerInput'),
-  submitAnswerBtn:  document.getElementById('submitAnswerBtn'),
-  revealAnswerBtn:  document.getElementById('revealAnswerBtn'),
-  validationHint:   document.getElementById('validationHint'),
+  questionArea:          document.getElementById('questionArea'),
+  questionAreaHeader:    document.getElementById('questionAreaHeader'),
+  questionBody:         document.getElementById('questionBody'),
+  questionAnsweredBadge:document.getElementById('questionAnsweredBadge'),
+  questionChevron:      document.getElementById('questionChevron'),
+  questionText:         document.getElementById('questionText'),
+  answerInput:          document.getElementById('answerInput'),
+  submitAnswerBtn:      document.getElementById('submitAnswerBtn'),
+  revealAnswerBtn:      document.getElementById('revealAnswerBtn'),
+  validationHint:       document.getElementById('validationHint'),
   // Chat
   chatArea:         document.getElementById('chatArea'),
   chatMessages:     document.getElementById('chatMessages'),
@@ -208,6 +215,11 @@ async function processSections() {
 
   // Show the sections UI
   showState('sections');
+
+  // Start with the section list collapsed so it doesn't crowd the reading area
+  els.sectionListToggle.classList.add('collapsed');
+  // (section-list already starts hidden via style="display:none" in HTML)
+
   updateUI();
 
   // Kick off prefetch for section 0 immediately in the background.
@@ -384,6 +396,23 @@ function updateUI() {
   state.failedAttempts = 0;
   state.chatHistory = [];
   els.chatMessages.innerHTML = '';
+
+  // Re-enable chat input for the new section (may have been locked by follow-up limit)
+  els.chatInput.disabled = false;
+  els.chatSendBtn.disabled = false;
+  els.chatInput.placeholder = 'Ask a follow-up question...';
+
+  // Reset section card collapse state for the new section
+  els.sectionCardBody.classList.remove('collapsed');
+  els.sectionCardChevron.classList.remove('collapsed');
+  els.sectionReviewedBadge.style.display = 'none';
+
+  // Reset question collapse state for the new section
+  if (els.questionBody) {
+    els.questionBody.classList.remove('collapsed');
+    els.questionChevron.classList.remove('collapsed');
+    els.questionAnsweredBadge.style.display = 'none';
+  }
 }
 
 function renderSectionList() {
@@ -429,25 +458,14 @@ function renderSectionList() {
 function navigateToSection(index) {
   const section = state.sections[index];
 
-  // Clear any pending chapter-end pause from the previous section
-  if (state.chapPauseTimer) {
-    clearTimeout(state.chapPauseTimer);
-    state.chapPauseTimer = null;
-  }
-
   if (state.pageData.type === 'youtube' && section.startSeconds != null) {
-    sendToTab('SEEK_VIDEO', { seconds: section.startSeconds });
-
-    // Schedule an auto-pause when the chapter window ends
-    if (section.endSeconds != null) {
-      const durationMs = (section.endSeconds - section.startSeconds) * 1000;
-      if (durationMs > 0) {
-        state.chapPauseTimer = setTimeout(() => {
-          sendToTab('PAUSE_VIDEO', {});
-          state.chapPauseTimer = null;
-        }, durationMs);
-      }
-    }
+    // Pass endSeconds so the content bridge can install a timeupdate listener
+    // that pauses exactly when the video reaches the chapter boundary.
+    // This is accurate regardless of buffering or scrubbing — unlike a setTimeout.
+    sendToTab('SEEK_VIDEO', {
+      seconds: section.startSeconds,
+      endSeconds: section.endSeconds ?? null
+    });
   } else if (section.elementIndex != null && section.elementIndex >= 0) {
     sendToTab('SCROLL_TO_HEADING', { elementIndex: section.elementIndex });
   }
@@ -531,6 +549,11 @@ function prefetchQuestion(index) {
 // ================================================================
 els.markReviewedBtn.addEventListener('click', async () => {
   els.markReviewedBtn.style.display = 'none';
+
+  // Collapse the section content card to make room for the question and discussion
+  els.sectionCardBody.classList.add('collapsed');
+  els.sectionCardChevron.classList.add('collapsed');
+  els.sectionReviewedBadge.style.display = 'inline-flex';
 
   els.questionArea.style.display = 'block';
   els.submitAnswerBtn.disabled = true;
@@ -635,6 +658,13 @@ els.revealAnswerBtn.addEventListener('click', () => {
 function onSectionCompleted() {
   state.sectionCompleted.add(state.currentIndex);
 
+  // Collapse the question area and show the answered badge
+  if (els.questionBody) {
+    els.questionBody.classList.add('collapsed');
+    els.questionChevron.classList.add('collapsed');
+    els.questionAnsweredBadge.style.display = 'inline-flex';
+  }
+
   // Show chat area + next button
   els.chatArea.style.display = 'block';
   els.nextSectionBtn.style.display = state.currentIndex < state.sections.length - 1 ? 'flex' : 'none';
@@ -650,6 +680,12 @@ function onSectionCompleted() {
   // Update the section list to show completion
   renderSectionList();
 }
+
+// Toggle the question body when the header is clicked
+els.questionAreaHeader.addEventListener('click', () => {
+  const isCollapsed = els.questionBody.classList.toggle('collapsed');
+  els.questionChevron.classList.toggle('collapsed', isCollapsed);
+});
 
 // ================================================================
 // NEXT SECTION
@@ -678,7 +714,35 @@ async function sendChatMessage() {
   if (!text) return;
 
   els.chatInput.value = '';
+
+  // Count how many follow-up questions the user has already asked in this section.
+  // chatHistory includes the tutor's opening message, so filter to user-only entries.
+  const questionsAsked = state.chatHistory.filter(m => m.role === 'user').length;
+
   addChatMessage('user', text);
+
+  // ── Follow-up limit ──────────────────────────────────────────────────────────
+  // After 5 questions, close the discussion and prompt the user to move on.
+  // We still let Gemini answer question #5 normally, then gate on #6+.
+  const FOLLOWUP_LIMIT = 5;
+  if (questionsAsked >= FOLLOWUP_LIMIT) {
+    const closingMsg = state.currentIndex < state.sections.length - 1
+      ? "You've done a great job exploring this section! 🎯 You've asked 5 follow-up questions — it's time to move on to the next section and keep the momentum going."
+      : "You've thoroughly covered this section — great work! 🎯 You've completed all sections in this article.";
+
+    addChatMessage('tutor', closingMsg);
+
+    // Disable input to make the closure clear, and pulse the Next Section button
+    els.chatInput.disabled = true;
+    els.chatSendBtn.disabled = true;
+    els.chatInput.placeholder = 'Move on to the next section to continue.';
+    if (els.nextSectionBtn.style.display !== 'none') {
+      els.nextSectionBtn.classList.add('pulse');
+      setTimeout(() => els.nextSectionBtn.classList.remove('pulse'), 2000);
+    }
+    return;
+  }
+  // ────────────────────────────────────────────────────────────────────────────
 
   // Create the tutor message bubble that will be streamed into
   const msgEl = document.createElement('div');
@@ -704,16 +768,61 @@ async function sendChatMessage() {
     const prompt = `${sectionContext}Previous conversation:\n${chatContext}\n\nStudent asks: ${text}`;
 
     const innerEl = msgEl.querySelector('.chat-msg-inner') || msgEl;
-    innerEl.innerHTML = ''; // clear typing dots
     let fullText = '';
+    let displayedText = '';
+    let pendingQueue = '';
+    let typewriterHandle = null;
+    let firstChunk = true;
+
+    // Drain the pending-character queue at a smooth typewriter pace.
+    // Emitting ~4 chars every 25 ms ≈ 160 chars/sec — fast enough to feel
+    // responsive, slow enough that updates are readable rather than jumpy.
+    function drainQueue() {
+      if (pendingQueue.length === 0) {
+        typewriterHandle = null;
+        return;
+      }
+      const batch = Math.min(4, pendingQueue.length);
+      displayedText += pendingQueue.slice(0, batch);
+      pendingQueue = pendingQueue.slice(batch);
+      innerEl.textContent = displayedText;
+      els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+      typewriterHandle = setTimeout(drainQueue, 25);
+    }
 
     await client.streamContent(prompt, systemInstruction, (chunk) => {
+      if (firstChunk) {
+        // Replace typing-dots with an empty text node only when text is
+        // actually arriving — avoids the blank-box gap.
+        innerEl.className = 'chat-msg-inner';
+        innerEl.textContent = '';
+        firstChunk = false;
+      }
       fullText += chunk;
-      innerEl.textContent = fullText;
-      els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+      pendingQueue += chunk;
+      // Kick off the drain loop if it isn't already running.
+      if (!typewriterHandle) drainQueue();
     });
 
-    // Update chat history with the full response
+    // Stream done — wait for the typewriter to finish draining so the
+    // chat history records exactly what the user read.
+    await new Promise(resolve => {
+      if (pendingQueue.length === 0) { resolve(); return; }
+      const origDrain = drainQueue;
+      function drainAndResolve() {
+        if (pendingQueue.length === 0) { resolve(); return; }
+        const batch = Math.min(4, pendingQueue.length);
+        displayedText += pendingQueue.slice(0, batch);
+        pendingQueue = pendingQueue.slice(batch);
+        innerEl.textContent = displayedText;
+        els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+        typewriterHandle = setTimeout(drainAndResolve, 25);
+      }
+      if (typewriterHandle) clearTimeout(typewriterHandle);
+      drainAndResolve();
+    });
+
+    // Update chat history with the complete response
     state.chatHistory.push({ role: 'user', text });
     state.chatHistory.push({ role: 'tutor', text: fullText });
 
@@ -739,8 +848,21 @@ function addChatMessage(role, text) {
 // SECTION LIST TOGGLE
 // ================================================================
 els.sectionListToggle.addEventListener('click', () => {
-  els.sectionListToggle.classList.toggle('collapsed');
-  els.sectionList.classList.toggle('collapsed');
+  const isCollapsed = els.sectionListToggle.classList.toggle('collapsed');
+  // Drive visibility via the class (CSS handles display:none via .collapsed)
+  // but we also need to clear the inline style set on initial load.
+  if (isCollapsed) {
+    els.sectionList.style.display = 'none';
+  } else {
+    els.sectionList.style.display = '';
+    els.sectionList.classList.remove('collapsed');
+  }
+});
+
+// Toggle the section card body when its header is clicked
+els.sectionCardHeader.addEventListener('click', () => {
+  const isCollapsed = els.sectionCardBody.classList.toggle('collapsed');
+  els.sectionCardChevron.classList.toggle('collapsed', isCollapsed);
 });
 
 // ================================================================

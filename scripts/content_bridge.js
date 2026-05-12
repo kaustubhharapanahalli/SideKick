@@ -13,6 +13,10 @@
 
   const isYouTube = location.hostname.includes('youtube.com') && location.pathname === '/watch';
 
+  // Tracks the active chapter-end pause listener so it can be removed
+  // when the user navigates to a different section or leaves the page.
+  let chapterEndListener = null;
+
   // ================================================================
   // YOUTUBE DETECTION
   // ================================================================
@@ -206,16 +210,54 @@
       + ' .ltx_document, .paper-content, #content, .post-content, .entry-content, .article-body'
     ) || document.body;
 
-    // Helper: returns true for <li> elements that are pure navigation links.
-    // These appear in table-of-contents sidebars and should not be treated as
-    // article content (they cause the intro textPreview to include section titles
-    // from elsewhere in the article, misleading the question generator).
-    function isNavLink(el) {
-      if (el.tagName !== 'LI') return false;
-      const anchor = el.querySelector('a');
-      // The entire visible text of the <li> is just a hyperlink → it's a nav item
-      return anchor && anchor.textContent.trim() === el.textContent.trim();
+    // Generalized helper: returns true when an element is primarily navigation /
+    // linking content rather than readable article body text.
+    //
+    // Handles the full spectrum of nav-content contamination:
+    //   • Pure-link <li> items in a TOC (Distill, Substack, academic sites)
+    //   • High link-density <p> elements (breadcrumbs, "See also" lines)
+    //   • List containers where the majority of siblings are navigation links
+    //     (WordPress TOC plugins, Ghost, etc. which inject <ul> inside <article>)
+    function isNavigationContent(el) {
+      const totalText = el.textContent.trim();
+      if (!totalText) return false;
+
+      const anchors = Array.from(el.querySelectorAll('a'));
+      if (anchors.length === 0) return false;
+
+      // Ratio of text inside <a> tags to total visible text
+      const anchorText = anchors.map(a => a.textContent.trim()).join('');
+      const linkRatio = anchorText.length / totalText.length;
+
+      // If >85% of this element's text is inside links → treat as navigation
+      if (linkRatio > 0.85) return true;
+
+      // For <li> items, also check if the parent list is a TOC-style list.
+      // If more than half of the direct <li> siblings are pure link-items,
+      // classify the whole list (including this item) as navigation.
+      if (el.tagName === 'LI') {
+        const parentList = el.closest('ul, ol');
+        if (parentList) {
+          const siblings = Array.from(parentList.querySelectorAll(':scope > li'));
+          if (siblings.length >= 3) {
+            const navCount = siblings.filter(li => {
+              const a = li.querySelector('a');
+              return a && a.textContent.trim() === li.textContent.trim();
+            }).length;
+            if (navCount / siblings.length > 0.5) return true;
+          }
+        }
+      }
+
+      return false;
     }
+
+    // Common TOC/nav container selectors used by CMS plugins and academic sites
+    const NAV_CONTAINERS =
+      'nav, footer, aside, [role="navigation"], d-contents, ' +
+      '.toc, #toc, .table-of-contents, #table-of-contents, ' +
+      '.wp-block-table-of-contents, .ez-toc-container, .rnm-toc, ' +
+      '.sidebar, #sidebar, .widget, .post-navigation';
 
     // Find ALL headings within the main content area only
     const allHeadings = Array.from(mainContent.querySelectorAll('h1, h2, h3'));
@@ -256,11 +298,9 @@
       const candidates = mainContent.querySelectorAll('p, li, blockquote, pre, td');
       let introText = '';
       for (const el of candidates) {
-        // Node.DOCUMENT_POSITION_FOLLOWING means firstHeading comes AFTER el
         const pos = firstHeading.compareDocumentPosition(el);
         if (pos & Node.DOCUMENT_POSITION_FOLLOWING) {
-          // el is BEFORE firstHeading — skip nav containers and pure-link list items
-          if (!el.closest('nav, footer, aside, [role="navigation"], d-contents') && !isNavLink(el)) {
+          if (!el.closest(NAV_CONTAINERS) && !isNavigationContent(el)) {
             const t = el.textContent.trim();
             if (t.length > 30) introText += t + '\n';
           }
@@ -294,7 +334,7 @@
           if (!beforeNext) continue; // el is after nextHeading
         }
 
-        if (!el.closest('nav, footer, aside, [role="navigation"], d-contents') && !isNavLink(el)) {
+        if (!el.closest(NAV_CONTAINERS) && !isNavigationContent(el)) {
           const t = el.textContent.trim();
           if (t.length > 0) textContent += t + '\n';
         }
@@ -335,6 +375,12 @@
   const messageListener = (message, sender, sendResponse) => {
     if (message.type === 'CLEANUP') {
       chrome.runtime.onMessage.removeListener(messageListener);
+      // Clean up any pending chapter-end listener
+      if (chapterEndListener) {
+        const video = document.querySelector('video');
+        if (video) video.removeEventListener('timeupdate', chapterEndListener);
+        chapterEndListener = null;
+      }
       delete window.__glsBridgeLoaded;
       sendResponse({ ok: true });
       return false;
@@ -373,15 +419,43 @@
     if (message.type === 'SEEK_VIDEO') {
       const video = document.querySelector('video');
       if (video) {
+        // Remove any previous chapter-end listener before seeking
+        if (chapterEndListener) {
+          video.removeEventListener('timeupdate', chapterEndListener);
+          chapterEndListener = null;
+        }
+
         video.currentTime = message.seconds;
         video.play();
+
+        // Install a timeupdate listener to auto-pause at the chapter boundary.
+        // Using the video's own clock is the only reliable approach —
+        // a setTimeout from the sidepanel can't account for buffering or scrubbing.
+        if (message.endSeconds != null) {
+          const endSec = message.endSeconds;
+          chapterEndListener = function onChapterEnd() {
+            if (video.currentTime >= endSec) {
+              video.pause();
+              video.removeEventListener('timeupdate', onChapterEnd);
+              chapterEndListener = null;
+            }
+          };
+          video.addEventListener('timeupdate', chapterEndListener);
+        }
       }
       sendResponse({ ok: true });
     }
 
     if (message.type === 'PAUSE_VIDEO') {
       const video = document.querySelector('video');
-      if (video) video.pause();
+      if (video) {
+        // Also clear the chapter-end listener so it doesn't re-fire
+        if (chapterEndListener) {
+          video.removeEventListener('timeupdate', chapterEndListener);
+          chapterEndListener = null;
+        }
+        video.pause();
+      }
       sendResponse({ ok: true });
     }
 
