@@ -5,7 +5,7 @@
  * gemini_api.js — Core API Client
  */
 class GeminiClient {
-  constructor(apiKey, model = 'gemini-2.5-flash') {
+  constructor(apiKey, model = 'gemini-3.1-flash-lite') {
     this.apiKey = apiKey;
     this.model = model;
     this.baseUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;

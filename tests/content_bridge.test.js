@@ -152,7 +152,7 @@ describe('Article Detection (DOM-based)', () => {
 describe('YouTube Description Chapter Parsing', () => {
   function extractChaptersFromText(text) {
     const chapters = [];
-    const pattern = /^[\s]*(\d{1,2}:?\d{1,2}:\d{2})\s+(.+)$/gm;
+    const pattern = /^\s*(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+)$/gm;
     let match;
     while ((match = pattern.exec(text)) !== null) {
       chapters.push({
@@ -164,17 +164,30 @@ describe('YouTube Description Chapter Parsing', () => {
     return chapters;
   }
 
-  test('parses standard chapter list', () => {
+  test('parses M:SS chapter list', () => {
     const desc = `
-      0:00:00 Introduction
-      0:02:30 Setup
-      0:05:15 Main Topic
-      0:10:00 Conclusion
+      0:00 Introduction
+      2:30 Setup
+      5:15 Main Topic
+      10:00 Conclusion
     `;
     const chapters = extractChaptersFromText(desc);
     expect(chapters.length).toBe(4);
     expect(chapters[0].title).toBe('Introduction');
     expect(chapters[1].seconds).toBe(150);
+    expect(chapters[3].title).toBe('Conclusion');
+  });
+
+  test('parses H:MM:SS chapter list', () => {
+    const desc = `
+      0:00:00 Introduction
+      0:02:30 Setup
+      1:05:15 Advanced Topic
+    `;
+    const chapters = extractChaptersFromText(desc);
+    expect(chapters.length).toBe(3);
+    expect(chapters[0].seconds).toBe(0);
+    expect(chapters[2].seconds).toBe(3915);
   });
 
   test('returns empty for no timestamps', () => {

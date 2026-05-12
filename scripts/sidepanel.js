@@ -21,7 +21,8 @@ const state = {
   chatHistory: [],     // [{role: 'user'|'tutor', text}]
   sectionCompleted: new Set(), // Indices of sections that have been fully completed (Q&A done)
   currentQuestion: null,
-  currentAnswer: null
+  currentAnswer: null,
+  questionCache: new Map() // index → Promise<{hasEnoughContent, question, idealAnswer}>
 };
 
 // ================================================================
@@ -90,6 +91,7 @@ window.addEventListener('unload', () => {
   if (state.tabId) {
     chrome.tabs.sendMessage(state.tabId, { type: 'CLEANUP' }).catch(() => {});
   }
+  state.questionCache.clear();
 });
 
 async function startDetection() {
@@ -157,14 +159,25 @@ async function processSections() {
 
   if (pd.type === 'youtube') {
     if (pd.hasChapters && pd.chapters.length > 0) {
-      // YouTube with chapters — use directly
-      state.sections = pd.chapters.map((ch, i) => ({
-        title: ch.title,
-        summary: '', // Will be filled by Gemini
-        startSeconds: ch.seconds,
-        endSeconds: pd.chapters[i + 1]?.seconds || null,
-        textPreview: '' // Chapters don't have text preview
-      }));
+      // YouTube with chapters — slice transcript per chapter window for Q&A context
+      state.sections = pd.chapters.map((ch, i) => {
+        const startSec = ch.seconds;
+        const endSec = pd.chapters[i + 1]?.seconds || null;
+
+        // Slice transcript entries that fall within this chapter's time window
+        const chapterText = (pd.transcript || [])
+          .filter(t => t.start >= startSec && (endSec === null || t.start < endSec))
+          .map(t => t.text)
+          .join(' ');
+
+        return {
+          title: ch.title,
+          summary: '',
+          startSeconds: startSec,
+          endSeconds: endSec,
+          textPreview: chapterText.substring(0, 3000)
+        };
+      });
     } else if (pd.transcript && pd.transcript.length > 0) {
       // YouTube without chapters — use Gemini to segment
       els.loaderText.textContent = 'Creating study sections from transcript...';
@@ -195,6 +208,11 @@ async function processSections() {
   // Show the sections UI
   showState('sections');
   updateUI();
+
+  // Kick off prefetch for section 0 immediately in the background.
+  // The user is now reading — by the time they click Mark as Reviewed
+  // the question will almost certainly be ready.
+  prefetchQuestion(0);
 }
 
 async function geminiSegmentTranscript(transcript) {
@@ -206,10 +224,10 @@ async function geminiSegmentTranscript(transcript) {
 
   const systemInstruction = `You are an expert tutor. Analyze the provided YouTube transcript and break it into 3 to 7 logical topic-based sections. For each section, provide:
 - title: A concise, descriptive section title
-- summary: A 2-3 sentence summary
+- summary: A 2-3 sentence summary of what is taught in this section
 - startSeconds: The timestamp in seconds where this section begins`;
 
-  const prompt = `Segment this transcript into learning sections:\n\n${transcriptText.substring(0, 8000)}`;
+  const prompt = `Segment this transcript into learning sections:\n\n${transcriptText.substring(0, 15000)}`;
 
   const responseSchema = {
     type: "ARRAY",
@@ -227,13 +245,24 @@ async function geminiSegmentTranscript(transcript) {
   try {
     const sections = await client.generateContent(prompt, systemInstruction, responseSchema);
     if (Array.isArray(sections) && sections.length > 0) {
-      state.sections = sections.map((s, i) => ({
-        title: s.title,
-        summary: s.summary,
-        startSeconds: s.startSeconds,
-        endSeconds: sections[i + 1]?.startSeconds || null,
-        textPreview: ''
-      }));
+      state.sections = sections.map((s, i) => {
+        const startSec = s.startSeconds;
+        const endSec = sections[i + 1]?.startSeconds || null;
+
+        // Slice transcript entries for this section's time window
+        const sectionTranscript = transcript
+          .filter(t => t.start >= startSec && (endSec === null || t.start < endSec))
+          .map(t => t.text)
+          .join(' ');
+
+        return {
+          title: s.title,
+          summary: s.summary,
+          startSeconds: startSec,
+          endSeconds: endSec,
+          textPreview: sectionTranscript.substring(0, 3000)
+        };
+      });
     } else {
       throw new Error('Gemini returned no sections.');
     }
@@ -244,7 +273,7 @@ async function geminiSegmentTranscript(transcript) {
       summary: 'Watch the full video and review.',
       startSeconds: 0,
       endSeconds: null,
-      textPreview: ''
+      textPreview: transcriptText.substring(0, 3000)
     }];
   }
 }
@@ -349,6 +378,8 @@ function updateUI() {
   els.answerInput.value = '';
   els.validationHint.style.display = 'none';
   els.revealAnswerBtn.style.display = 'none';
+  els.submitAnswerBtn.style.display = '';
+  els.submitAnswerBtn.disabled = false;
   state.failedAttempts = 0;
   state.chatHistory = [];
   els.chatMessages.innerHTML = '';
@@ -404,52 +435,123 @@ function navigateToSection(index) {
     // Scroll to article heading
     sendToTab('SCROLL_TO_HEADING', { elementIndex: section.elementIndex });
   }
+
+  // Prefetch question for this section and the next one in the background
+  prefetchQuestion(index);
+  if (index + 1 < state.sections.length) {
+    prefetchQuestion(index + 1);
+  }
 }
 
 // ================================================================
-// MARK AS REVIEWED → GENERATE QUESTION
+// ASYNC QUESTION PRE-FETCHING
+// ================================================================
+
+/**
+ * Kicks off a Gemini question-generation request for section at `index`.
+ * The result is cached in state.questionCache so that markReviewedBtn
+ * can await it instantly if the request already completed.
+ * Calling this multiple times for the same index is safe — the cached
+ * Promise is returned immediately on subsequent calls.
+ */
+function prefetchQuestion(index) {
+  if (state.questionCache.has(index)) return state.questionCache.get(index);
+
+  const section = state.sections[index];
+  if (!section || !state.apiKey) return;
+
+  const contentText = section.textPreview
+    ? section.textPreview.substring(0, 3000)
+    : '';
+  const context = [
+    contentText,
+    section.summary ? `Section Summary: ${section.summary}` : ''
+  ].filter(Boolean).join('\n\n');
+
+  // Gate: if there is no meaningful content, skip Q&A entirely.
+  // We decide this in code rather than asking Gemini, which tends to be
+  // overly conservative when classifying content as "not enough".
+  const hasContent = context.trim().length > 150;
+
+  const promise = (async () => {
+    if (!hasContent) {
+      return { skip: true };
+    }
+
+    try {
+      const client = new GeminiClient(state.apiKey);
+
+      const systemInstruction = `You are an expert tutor. Given the content of a learning section, generate ONE specific and targeted question that tests the reader's understanding of the key idea, concept, or process described. The question should be directly answerable from the provided content. Also provide the ideal answer.`;
+
+      const prompt = `Section Title: "${section.title}"\n\nSection Content:\n${context}\n\nGenerate a question and ideal answer based on this content.`;
+
+      const responseSchema = {
+        type: 'OBJECT',
+        properties: {
+          question: { type: 'STRING' },
+          idealAnswer: { type: 'STRING' }
+        },
+        required: ['question', 'idealAnswer']
+      };
+
+      const result = await client.generateContent(prompt, systemInstruction, responseSchema);
+      return { skip: false, question: result.question, idealAnswer: result.idealAnswer };
+    } catch (_) {
+      // Graceful fallback — always resolves so markReviewedBtn never hangs
+      return {
+        skip: false,
+        question: `What is the main concept covered in the "${section.title}" section?`,
+        idealAnswer: section.summary || 'Review the key concepts from this section.'
+      };
+    }
+  })();
+
+  state.questionCache.set(index, promise);
+  return promise;
+}
+
+// ================================================================
+// MARK AS REVIEWED → SHOW QUESTION (from pre-fetched cache)
 // ================================================================
 els.markReviewedBtn.addEventListener('click', async () => {
   els.markReviewedBtn.style.display = 'none';
 
-  // Show question area with loading
   els.questionArea.style.display = 'block';
-  els.questionText.textContent = 'Generating question...';
   els.submitAnswerBtn.disabled = true;
 
-  try {
-    const client = new GeminiClient(state.apiKey);
-    const current = state.sections[state.currentIndex];
+  const idx = state.currentIndex;
 
-    const context = current.textPreview
-      ? current.textPreview.substring(0, 2000)
-      : current.summary;
+  // Ensure a prefetch is running (guards against edge cases where it wasn't started yet)
+  const questionPromise = prefetchQuestion(idx);
 
-    const systemInstruction = `You are an expert tutor. Generate one thoughtful question about the following content section. The question should test understanding, not just recall. Also generate an ideal answer.`;
+  // If the promise resolved already this will be instant; otherwise show a brief wait message
+  const isReady = await Promise.race([
+    questionPromise.then(() => true),
+    new Promise(r => setTimeout(() => r(false), 50))
+  ]);
 
-    const prompt = `Section: "${current.title}"\n\nContent:\n${context}\n\nGenerate a question and ideal answer.`;
+  if (!isReady) {
+    els.questionText.textContent = 'Just a moment...';
+  }
 
-    const responseSchema = {
-      type: "OBJECT",
-      properties: {
-        question: { type: "STRING" },
-        idealAnswer: { type: "STRING" }
-      },
-      required: ["question", "idealAnswer"]
-    };
+  // Await the real result (instant if already resolved)
+  const result = await questionPromise;
 
-    const result = await client.generateContent(prompt, systemInstruction, responseSchema);
+  if (result.skip) {
+    // Thin section with no meaningful content — auto-complete without Q&A
+    els.questionArea.style.display = 'none';
+    onSectionCompleted();
+    return;
+  }
 
-    state.currentQuestion = result.question;
-    state.currentAnswer = result.idealAnswer;
-    els.questionText.textContent = result.question;
-    els.submitAnswerBtn.disabled = false;
+  state.currentQuestion = result.question;
+  state.currentAnswer = result.idealAnswer;
+  els.questionText.textContent = result.question;
+  els.submitAnswerBtn.disabled = false;
 
-  } catch (e) {
-    els.questionText.textContent = 'What are the key takeaways from this section?';
-    state.currentQuestion = 'What are the key takeaways from this section?';
-    state.currentAnswer = current.summary;
-    els.submitAnswerBtn.disabled = false;
+  // Pre-fetch next section's question now (user is about to start answering this one)
+  if (idx + 1 < state.sections.length) {
+    prefetchQuestion(idx + 1);
   }
 });
 

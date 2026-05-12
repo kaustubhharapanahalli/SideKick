@@ -22,40 +22,28 @@
 
     const title = document.title.replace(' - YouTube', '').trim();
 
+    // Always fetch the transcript in the background — even if chapters exist,
+    // the transcript text is used to populate per-section textPreview so that
+    // Gemini can generate specific questions rather than vague ones.
+    const transcriptPromise = extractTranscript(videoId);
+
     // --- Strategy 1: Native Chapters from DOM ---
     const chapters = extractChaptersFromDOM();
     if (chapters.length > 0) {
-      return {
-        type: 'youtube',
-        videoId,
-        title,
-        chapters,
-        hasChapters: true
-      };
+      const transcript = await transcriptPromise;
+      return { type: 'youtube', videoId, title, chapters, hasChapters: true, transcript };
     }
 
     // --- Strategy 2: Chapters from description timestamps ---
     const descChapters = extractChaptersFromDescription();
     if (descChapters.length >= 2) {
-      return {
-        type: 'youtube',
-        videoId,
-        title,
-        chapters: descChapters,
-        hasChapters: true
-      };
+      const transcript = await transcriptPromise;
+      return { type: 'youtube', videoId, title, chapters: descChapters, hasChapters: true, transcript };
     }
 
-    // --- Strategy 3: No chapters → extract transcript for Gemini ---
-    const transcript = await extractTranscript(videoId);
-    return {
-      type: 'youtube',
-      videoId,
-      title,
-      chapters: [],
-      hasChapters: false,
-      transcript
-    };
+    // --- Strategy 3: No chapters → segment via Gemini ---
+    const transcript = await transcriptPromise;
+    return { type: 'youtube', videoId, title, chapters: [], hasChapters: false, transcript };
   }
 
   function extractChaptersFromDOM() {
@@ -103,7 +91,14 @@
       }
     } catch (e) { /* Chapter data unavailable */ }
 
-    return chapters;
+    // Deduplicate by seconds — findDeep may surface the same chapter
+    // from multiple branches of ytInitialData (player bar, sidebar, etc.)
+    const seen = new Set();
+    return chapters.filter(ch => {
+      if (seen.has(ch.seconds)) return false;
+      seen.add(ch.seconds);
+      return true;
+    });
   }
 
   function extractChaptersFromDescription() {
@@ -112,8 +107,8 @@
     if (!descEl) return chapters;
 
     const text = descEl.textContent || '';
-    // Match lines like "0:00 Introduction" or "1:23:45 Advanced Topics"
-    const pattern = /^[\s]*(\d{1,2}:?\d{1,2}:\d{2})\s+(.+)$/gm;
+    // Match lines like "0:00 Introduction", "2:30 Setup", or "1:23:45 Advanced Topics"
+    const pattern = /^\s*(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+)$/gm;
     let match;
     while ((match = pattern.exec(text)) !== null) {
       chapters.push({
@@ -165,17 +160,33 @@
   }
 
   function findPlayerResponse() {
-    // Try window variable
+    // Strategy 1: Live window object (most reliable — set by YouTube's own JS)
+    try {
+      if (window.ytInitialPlayerResponse && window.ytInitialPlayerResponse.captions) {
+        return window.ytInitialPlayerResponse;
+      }
+    } catch (e) { /* continue */ }
+
+    // Strategy 2: Scan inline script tags
     try {
       const scripts = document.querySelectorAll('script');
       for (const script of scripts) {
         const text = script.textContent;
         if (text.includes('ytInitialPlayerResponse')) {
-          const match = text.match(/var ytInitialPlayerResponse\s*=\s*(\{.*?\});/s);
-          if (match) return JSON.parse(match[1]);
+          // Try assignment pattern: ytInitialPlayerResponse = {...}
+          const match = text.match(/ytInitialPlayerResponse\s*=\s*(\{[\s\S]+?\});\s*(?:var|let|const|window|if|\()/m);
+          if (match) {
+            try { return JSON.parse(match[1]); } catch (_) {}
+          }
+          // Try object literal without trailing semicolon
+          const match2 = text.match(/ytInitialPlayerResponse\s*=\s*(\{[\s\S]+\})/m);
+          if (match2) {
+            try { return JSON.parse(match2[1]); } catch (_) {}
+          }
         }
       }
     } catch (e) { /* continue */ }
+
     return null;
   }
 
@@ -185,56 +196,94 @@
   function detectArticle() {
     const title = document.title;
 
-    // Find headings that structure the content
-    const allHeadings = Array.from(document.querySelectorAll('h1, h2, h3'));
+    // Identify the main content container
+    const mainContent = document.querySelector(
+      'article, main, [role="main"], .mw-parser-output, #mw-content-text, #content, .post-content, .entry-content, .article-body'
+    ) || document.body;
 
-    // Filter to headings that are likely content headings (not nav, footer, sidebar)
+    // Find ALL headings within the main content area only
+    const allHeadings = Array.from(mainContent.querySelectorAll('h1, h2, h3'));
+
+    // Filter to content headings (not nav, footer, sidebar, or the page title H1)
+    const pageTitle = title.split(' - ')[0].trim();
     const contentHeadings = allHeadings.filter(h => {
-      // Skip if inside nav, footer, sidebar, header elements
       const parent = h.closest('nav, footer, aside, header, [role="navigation"], [role="banner"]');
       if (parent) return false;
-
-      // Skip very short or empty headings
       if (h.textContent.trim().length < 2) return false;
-
-      // Skip if it's the page's main h1 (we use that as the title)
-      if (h.tagName === 'H1' && h.textContent.trim() === title.split(' - ')[0].trim()) return false;
-
+      // Skip the main article H1 (used as the panel title, not a section)
+      if (h.tagName === 'H1' && h.textContent.trim() === pageTitle) return false;
       return true;
     });
 
-    // Group into sections: each heading starts a section
     const sections = [];
-    contentHeadings.forEach((heading, i) => {
-      // Collect text between this heading and the next
-      const nextHeading = contentHeadings[i + 1];
-      let textContent = '';
-      let el = heading.nextElementSibling;
-      while (el && el !== nextHeading && !isHeading(el)) {
-        // Skip nav/sidebar containers
-        if (!el.closest('nav, footer, aside, [role="navigation"]')) {
-          textContent += el.textContent.trim() + '\n';
+
+    // --- Capture introductory text before the first content heading ---
+    // Use compareDocumentPosition to find text blocks that precede the first heading
+    // in DOM order, regardless of nesting depth.
+    if (contentHeadings.length > 0) {
+      const firstHeading = contentHeadings[0];
+      const candidates = mainContent.querySelectorAll('p, li, blockquote, pre, td');
+      let introText = '';
+      for (const el of candidates) {
+        // Node.DOCUMENT_POSITION_FOLLOWING means firstHeading comes AFTER el
+        const pos = firstHeading.compareDocumentPosition(el);
+        if (pos & Node.DOCUMENT_POSITION_FOLLOWING) {
+          // el is BEFORE firstHeading — check it isn't inside a nav/aside
+          if (!el.closest('nav, footer, aside, [role="navigation"]')) {
+            const t = el.textContent.trim();
+            if (t.length > 20) introText += t + '\n';
+          }
         }
-        el = el.nextElementSibling;
+      }
+      if (introText.trim().length > 100) {
+        sections.push({
+          title: 'Introduction',
+          level: 2,
+          textPreview: introText.trim().substring(0, 2000),
+          elementIndex: -1
+        });
+      }
+    }
+
+    // --- Build one section per content heading ---
+    contentHeadings.forEach((heading, i) => {
+      const nextHeading = contentHeadings[i + 1] || null;
+
+      // Collect all text-bearing elements between this heading and the next
+      const candidates = mainContent.querySelectorAll('p, li, blockquote, pre, td');
+      let textContent = '';
+      for (const el of candidates) {
+        // el must come AFTER the current heading in DOM order
+        const afterCurrent = heading.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING;
+        if (!afterCurrent) continue;
+
+        // el must come BEFORE the next heading (if there is one)
+        if (nextHeading) {
+          const beforeNext = nextHeading.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING;
+          if (!beforeNext) continue; // el is after nextHeading
+        }
+
+        if (!el.closest('nav, footer, aside, [role="navigation"]')) {
+          const t = el.textContent.trim();
+          if (t.length > 0) textContent += t + '\n';
+        }
       }
 
-      // Only include sections with meaningful content
-      if (textContent.trim().length > 50 || heading.tagName === 'H2') {
+      if (textContent.trim().length > 30 || heading.tagName !== 'H3') {
         sections.push({
           title: heading.textContent.trim(),
           level: parseInt(heading.tagName[1]),
-          textPreview: textContent.trim().substring(0, 1000),
-          elementIndex: Array.from(document.querySelectorAll('h1, h2, h3')).indexOf(heading)
+          textPreview: textContent.trim().substring(0, 2000),
+          elementIndex: Array.from(mainContent.querySelectorAll('h1, h2, h3')).indexOf(heading)
         });
       }
     });
 
-    // If no headings found, create a single section from the full page
+    // Fallback: no headings found — use the full page text as one section
     if (sections.length === 0) {
-      const mainContent = document.querySelector('article, main, [role="main"], .mw-parser-output, #content');
-      const text = mainContent ? mainContent.textContent.trim() : document.body.textContent.trim();
+      const text = mainContent.textContent.trim();
       sections.push({
-        title: title.split(' - ')[0].trim() || 'Main Content',
+        title: pageTitle || 'Main Content',
         level: 2,
         textPreview: text.substring(0, 2000),
         elementIndex: -1
@@ -243,7 +292,7 @@
 
     return {
       type: 'article',
-      title: title.split(' - ')[0].trim() || title,
+      title: pageTitle || title,
       sections,
       url: location.href
     };
